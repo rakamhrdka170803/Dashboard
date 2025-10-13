@@ -1,82 +1,107 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import CalendarMonth from "../../components/CalendarMonth";
-import { listMonthly, createSchedule, deleteSchedule } from "../../api/schedules";
-import { listUsers } from "../../api/users";
+import {
+  listMonthly,
+  createSchedule,
+  updateSchedule,
+  deleteSchedule,
+} from "../../api/schedules";
+import { listUsersMini } from "../../api/users";
 
 export default function BackofficeSchedules() {
+  // month picker
   const [month, setMonth] = useState(dayjs().format("YYYY-MM"));
+
+  // dropdown agent
+  const [agents, setAgents] = useState([]); // [{id, full_name}]
+  const [selectedAgent, setSelectedAgent] = useState(""); // string id
+
+  // kalender data
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // dropdown agent
-  const [agents, setAgents] = useState([]);
-  const [selectedAgent, setSelectedAgent] = useState(""); // user_id (string)
-
-  // form create
+  // form (buat / edit)
   const [date, setDate] = useState(dayjs().format("YYYY-MM-DD"));
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("17:00");
   const [channel, setChannel] = useState("VOICE");
   const [shiftName, setShiftName] = useState("");
   const [notes, setNotes] = useState("");
+  const [editingId, setEditingId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
 
-  // Auto +8 jam saat mengubah start
+  // label agent terpilih
+  const pickedAgent = useMemo(
+    () => agents.find((a) => String(a.id) === String(selectedAgent)) || null,
+    [agents, selectedAgent]
+  );
+
+  // auto +8 jam setiap ubah start/date
   useEffect(() => {
     const st = dayjs(`${date}T${startTime}:00`);
     setEndTime(st.add(8, "hour").format("HH:mm"));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startTime, date]);
 
-  // === FIX: fungsi async yang benar untuk load users ===
-  const loadUsers = async () => {
-    const res = await listUsers({ page: 1, size: 1000 });
-    const all = res.items || [];
-
-    // roles dari backend = array of strings, contoh ["AGENT","..."]
-    const onlyAgents = all.filter(
-      (u) => Array.isArray(u.roles) && u.roles.includes("AGENT")
-    );
-
-    if (onlyAgents.length > 0) {
-      setAgents(onlyAgents);
-      if (!selectedAgent) setSelectedAgent(String(onlyAgents[0].id));
-    } else {
-      // fallback supaya bisa tes walau belum ada AGENT
-      setAgents(all);
-      if (!selectedAgent && all.length) setSelectedAgent(String(all[0].id));
-    }
+  // load agents dari /users/mini (semua login boleh)
+  const loadAgents = async () => {
+    const list = await listUsersMini({ page: 1, size: 2000 });
+    // optional: filter hanya yang namanya ada (biar rapi)
+    const cleaned = (list || []).filter((u) => !!u.full_name);
+    setAgents(cleaned);
+    if (!selectedAgent && cleaned.length) setSelectedAgent(String(cleaned[0].id));
   };
 
+  // load schedules untuk agent terpilih
   const loadSchedules = async () => {
+    if (!selectedAgent) {
+      setItems([]);
+      return;
+    }
     setLoading(true);
     try {
-      const params = { month };
-      if (selectedAgent) params.userId = selectedAgent;
-      const { items } = await listMonthly(params);
-      setItems(items);
+      const { items } = await listMonthly({
+        month,
+        userId: selectedAgent,
+      });
+      setItems(items || []);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadUsers();
-  }, []); // sekali saat mount
+    loadAgents();
+  }, []);
   useEffect(() => {
     loadSchedules();
   }, [month, selectedAgent]);
 
   const onDayClick = (d) => {
+    // klik tanggal di kalender → set tanggal form & keluar dari mode edit
     setDate(d.format("YYYY-MM-DD"));
+    setEditingId(null);
+    setShiftName("");
+    setNotes("");
+  };
+
+  const resetForm = () => {
+    setEditingId(null);
+    setDate(dayjs().format("YYYY-MM-DD"));
+    setStartTime("09:00");
+    setEndTime("17:00");
+    setChannel("VOICE");
+    setShiftName("");
+    setNotes("");
+    setMsg("");
   };
 
   const onSubmit = async (e) => {
     e.preventDefault();
     if (!selectedAgent) {
-      setMsg("Pilih agent terlebih dahulu");
+      setMsg("Pilih agent terlebih dahulu.");
       return;
     }
     setSubmitting(true);
@@ -84,36 +109,77 @@ export default function BackofficeSchedules() {
     try {
       const startISO = dayjs(`${date}T${startTime}:00`).toISOString();
       const endISO = dayjs(`${date}T${endTime}:00`).toISOString();
-      await createSchedule({
-        user_id: Number(selectedAgent),
-        start_at: startISO,
-        end_at: endISO,
-        channel,
-        shift_name: shiftName || undefined,
-        notes: notes || undefined,
-      });
-      setMsg("Jadwal berhasil dibuat.");
+
+      if (editingId) {
+        await updateSchedule(editingId, {
+          user_id: Number(selectedAgent),
+          start_at: startISO,
+          end_at: endISO,
+          channel,
+          shift_name: shiftName || undefined,
+          notes: notes || undefined,
+        });
+        setMsg("Jadwal berhasil diperbarui.");
+      } else {
+        await createSchedule({
+          user_id: Number(selectedAgent),
+          start_at: startISO,
+          end_at: endISO,
+          channel,
+          shift_name: shiftName || undefined,
+          notes: notes || undefined,
+        });
+        setMsg("Jadwal berhasil dibuat.");
+      }
       await loadSchedules();
     } catch (err) {
-      setMsg(err?.response?.data?.error || "Gagal membuat jadwal.");
+      setMsg(err?.response?.data?.error || "Gagal menyimpan jadwal.");
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const onEdit = (it) => {
+    // isi form dari item
+    setEditingId(it.id);
+    setSelectedAgent(String(it.user_id)); // jaga2 kalau pindah agent
+    setDate(dayjs(it.start_at).format("YYYY-MM-DD"));
+    setStartTime(dayjs(it.start_at).format("HH:mm"));
+    setEndTime(dayjs(it.end_at).format("HH:mm"));
+    setChannel(it.channel);
+    setShiftName(it.shift_name || "");
+    setNotes(it.notes || "");
   };
 
   const onDelete = async (id) => {
     if (!confirm("Hapus jadwal ini?")) return;
     try {
       await deleteSchedule(id);
+      if (editingId === id) resetForm();
       await loadSchedules();
     } catch (err) {
       alert(err?.response?.data?.error || "Gagal menghapus jadwal.");
     }
   };
 
+  // komponen kecil untuk chip legend
+  const chip = (bg, text) => (
+    <span
+      style={{
+        background: bg,
+        borderRadius: 999,
+        padding: "2px 8px",
+        fontSize: 11,
+        display: "inline-block",
+      }}
+    >
+      {text}
+    </span>
+  );
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.2fr .8fr", gap: 16 }}>
-      {/* LEFT: Calendar */}
+    <div style={{ display: "grid", gridTemplateColumns: "1.1fr .9fr", gap: 16 }}>
+      {/* LEFT: Filter + Calendar */}
       <section>
         <div className="card" style={{ marginBottom: 12 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -122,18 +188,21 @@ export default function BackofficeSchedules() {
               className="input"
               value={month}
               onChange={(e) => setMonth(e.target.value)}
-              style={{ width: 160, padding: "8px 10px" }}
+              style={{ width: 170, padding: "8px 10px" }}
             />
             <select
               className="input"
               value={selectedAgent}
-              onChange={(e) => setSelectedAgent(e.target.value)}
-              style={{ minWidth: 240 }}
+              onChange={(e) => {
+                setSelectedAgent(e.target.value);
+                setEditingId(null);
+              }}
+              style={{ minWidth: 280 }}
             >
+              {!agents.length && <option value="">(Belum ada data agent)</option>}
               {agents.map((a) => (
                 <option key={a.id} value={a.id}>
-                  #{a.id} • {a.full_name || a.email}
-                  {Array.isArray(a.roles) && !a.roles.includes("AGENT") ? " (non-agent)" : ""}
+                  {a.full_name || `Agent #${a.id}`}
                 </option>
               ))}
             </select>
@@ -143,58 +212,68 @@ export default function BackofficeSchedules() {
           </div>
         </div>
 
+        {/* Kalender */}
         {loading ? (
           <p className="helper">Memuat jadwal…</p>
         ) : (
-          <CalendarMonth
-            monthStr={month}
-            items={items}
-            onDayClick={onDayClick}
-            renderItem={(it) => (
-              <div style={{ fontSize: 12 }}>
-                <div style={{ fontWeight: 700 }}>
-                  {dayjs(it.start_at).format("HH:mm")}–{dayjs(it.end_at).format("HH:mm")} ({it.channel})
+          <>
+            <CalendarMonth
+              monthStr={month}
+              items={items}
+              onDayClick={onDayClick}
+              // Render compact: jam + channel + tombol Edit/Hapus terlihat jelas (tanpa scrollbar)
+              renderItem={(it) => (
+                <div
+                  style={{
+                    fontSize: 12,
+                    display: "grid",
+                    gap: 6,
+                  }}
+                >
+                  <div style={{ fontWeight: 700 }}>
+                    {dayjs(it.start_at).format("HH:mm")}–{dayjs(it.end_at).format("HH:mm")} • {it.channel}
+                  </div>
+                  {it.shift_name && (
+                    <div style={{ color: "#374151" }}>Shift: {it.shift_name}</div>
+                  )}
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button className="btn" style={{ width: 64 }} onClick={() => onEdit(it)}>
+                      Edit
+                    </button>
+                    <button
+                      className="btn"
+                      style={{
+                        width: 74,
+                        background: "linear-gradient(135deg,#9CA3AF,#6B7280)",
+                      }}
+                      onClick={() => onDelete(it.id)}
+                    >
+                      Hapus
+                    </button>
+                  </div>
                 </div>
-                <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-                  <button className="btn" style={{ width: 80 }} onClick={() => onDelete(it.id)}>
-                    Hapus
-                  </button>
-                </div>
-              </div>
-            )}
-          />
+              )}
+            />
+
+            {/* Legend */}
+            <div style={{ marginTop: 12, fontSize: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {chip("#DBEAFE", "VOICE (biru)")}
+              {chip("#DCFCE7", "SOSMED (hijau)")}
+              {chip("#FEE2E2", "CUTI (merah)")}
+              {chip("#FFE4F5", "Libur/Off (pink)")}
+            </div>
+          </>
         )}
       </section>
 
-      {/* RIGHT: Create form */}
+      {/* RIGHT: Form */}
       <section className="card">
         <h3 style={{ marginTop: 0 }}>Buat Jadwal Agent</h3>
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
-          <div>
-            <label className="label">Agent</label>
-            <select
-              className="input"
-              value={selectedAgent}
-              onChange={(e) => setSelectedAgent(e.target.value)}
-              required
-            >
-              <option value="" disabled>
-                Pilih agent…
-              </option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  #{a.id} • {a.full_name || a.email}
-                  {Array.isArray(a.roles) && !a.roles.includes("AGENT") ? " (non-agent)" : ""}
-                </option>
-              ))}
-            </select>
-            {agents.length === 0 && (
-              <div className="helper" style={{ marginTop: 6 }}>
-                Belum ada user tampil. Pastikan ada user ber-role <b>AGENT</b>.
-              </div>
-            )}
-          </div>
+        <div className="helper" style={{ marginTop: -6, marginBottom: 8 }}>
+          Agent terpilih: <b>{pickedAgent?.full_name || "—"}</b>
+        </div>
 
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div>
               <label className="label">Tanggal</label>
@@ -208,7 +287,11 @@ export default function BackofficeSchedules() {
             </div>
             <div>
               <label className="label">Channel</label>
-              <select className="input" value={channel} onChange={(e) => setChannel(e.target.value)}>
+              <select
+                className="input"
+                value={channel}
+                onChange={(e) => setChannel(e.target.value)}
+              >
                 <option value="VOICE">VOICE</option>
                 <option value="SOSMED">SOSMED</option>
               </select>
@@ -260,9 +343,22 @@ export default function BackofficeSchedules() {
           </div>
 
           {msg && <div className="helper">{msg}</div>}
-          <button className="btn" disabled={submitting}>
-            {submitting ? "Menyimpan..." : "Simpan Jadwal"}
-          </button>
+
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" type="submit" disabled={submitting || !selectedAgent}>
+              {submitting ? "Menyimpan..." : editingId ? "Update Jadwal" : "Simpan Jadwal"}
+            </button>
+            {editingId && (
+              <button
+                type="button"
+                className="btn"
+                style={{ background: "linear-gradient(135deg,#9CA3AF,#6B7280)" }}
+                onClick={resetForm}
+              >
+                Batal Edit
+              </button>
+            )}
+          </div>
         </form>
       </section>
     </div>

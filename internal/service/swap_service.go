@@ -34,11 +34,23 @@ func (s *SwapService) CreateFromRFC3339(requester uint, startRFC3339, reason str
 	return s.Create(CreateSwapInput{RequesterID: requester, StartAt: st, Reason: reason})
 }
 
+// helper kecil supaya body notif bisa memuat nama manusiawi
+// helper kecil supaya body notif bisa memuat nama manusiawi
+// helper tetap:
+func (s *SwapService) displayName(uid uint) string {
+	u, _ := s.users.FindByID(uid)
+	if u != nil && u.FullName != "" {
+		return u.FullName
+	}
+	return fmt.Sprintf("Agent #%d", uid) // fallback
+}
+
 func (s *SwapService) Create(in CreateSwapInput) (*domain.SwapRequest, error) {
 	if in.RequesterID == 0 {
 		return nil, errors.New("requester required")
 	}
 	endAt := in.StartAt.Add(8 * time.Hour)
+
 	m := &domain.SwapRequest{
 		RequesterID: in.RequesterID,
 		StartAt:     in.StartAt,
@@ -50,15 +62,23 @@ func (s *SwapService) Create(in CreateSwapInput) (*domain.SwapRequest, error) {
 		return nil, err
 	}
 
-	// broadcast sederhana
+	// Broadcast ke semua user lain (sederhana). Body dibuat lebih informatif.
+	reqName := s.displayName(in.RequesterID)
+	startStr := in.StartAt.Format("02 Jan 06 15:04")
+	endStr := endAt.Format("02 Jan 06 15:04")
+
 	users, _, _ := s.users.List(1, 1000)
 	for _, u := range users {
 		if u.ID == in.RequesterID {
 			continue
 		}
-		_ = s.notif.Notify(u.ID, "Permintaan Tukar Dinas/Libur",
-			fmt.Sprintf("Agent #%d mengajukan tukar %s–%s", in.RequesterID, in.StartAt.Format(time.RFC822), endAt.Format(time.RFC822)),
-			"SWAP", &m.ID)
+		_ = s.notif.Notify(
+			u.ID,
+			"Permintaan Tukar Dinas/Libur",
+			fmt.Sprintf("%s mengajukan tukar %s–%s (±8 jam)", reqName, startStr, endStr),
+			"SWAP",
+			&m.ID,
+		)
 	}
 	return m, nil
 }
@@ -118,7 +138,7 @@ func (s *SwapService) Accept(swapID uint, counterpartyID uint, counterpartySched
 		return nil, errors.New("swap menyebabkan bentrok pada jadwal penerima")
 	}
 
-	// Tukar pemilik
+	// Tukar pemilik 2 schedule
 	reqExact.UserID = cpID
 	cpSch.UserID = requesterID
 	if err := s.schedules.UpdateSchedule(reqExact); err != nil {
@@ -136,18 +156,37 @@ func (s *SwapService) Accept(swapID uint, counterpartyID uint, counterpartySched
 		return nil, err
 	}
 
-	_ = s.notif.Notify(requesterID, "Swap Disetujui",
-		fmt.Sprintf("Swap #%d disetujui oleh Agent #%d", m.ID, cpID), "SWAP", &m.ID)
-	_ = s.notif.Notify(cpID, "Swap Disetujui",
-		fmt.Sprintf("Kamu menerima swap #%d (jadwal diperbarui)", m.ID), "SWAP", &m.ID)
+	// Notifikasi lebih informatif (nama + window waktu)
+	reqName := s.displayName(requesterID)
+	cpName := s.displayName(cpID)
+	startStr := m.StartAt.Format("02 Jan 06 15:04")
+	endStr := m.EndAt.Format("02 Jan 06 15:04")
 
+	_ = s.notif.Notify(
+		requesterID, "Swap Disetujui",
+		fmt.Sprintf("Swap #%d disetujui oleh %s • Window %s–%s", m.ID, cpName, startStr, endStr),
+		"SWAP", &m.ID,
+	)
+	_ = s.notif.Notify(
+		cpID, "Swap Disetujui",
+		fmt.Sprintf("Kamu menerima swap #%d dengan %s • Jadwal telah diperbarui", m.ID, reqName),
+		"SWAP", &m.ID,
+	)
+
+	// Broadcast ke backoffice roles
 	users, _, _ := s.users.List(1, 1000)
 	for _, u := range users {
 		for _, r := range u.Roles {
 			switch r.Name {
 			case domain.RoleSPV, domain.RoleTL, domain.RoleQC, domain.RoleHRAdmin, domain.RoleSuperAdmin:
-				_ = s.notif.Notify(u.ID, "Swap Disetujui",
-					fmt.Sprintf("Swap #%d telah disetujui & jadwal diupdate", m.ID), "SWAP", &m.ID)
+				_ = s.notif.Notify(
+					u.ID,
+					"Swap Disetujui",
+					fmt.Sprintf("Swap #%d telah disetujui & jadwal diupdate (Requester %s • Penerima %s)",
+						m.ID, reqName, cpName),
+					"SWAP",
+					&m.ID,
+				)
 			}
 		}
 	}
@@ -173,5 +212,6 @@ func (s *SwapService) Cancel(swapID uint, requesterID uint) (*domain.SwapRequest
 	if err := s.swaps.Update(m); err != nil {
 		return nil, err
 	}
+	// Catatan: tidak mengirim notif saat cancel → sesuai requirement "kalau ditolak jangan jadi notif"
 	return m, nil
 }

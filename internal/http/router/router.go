@@ -1,3 +1,4 @@
+// router/router.go (FIXED)
 package router
 
 import (
@@ -53,22 +54,31 @@ func Setup(
 	adminOnly.PATCH("/users/:id/roles", userH.AssignRoles)
 	adminOnly.DELETE("/users/:id", userH.Delete)
 
+	// USERS (mini) – boleh diakses semua yang login
+	secured.GET("/users/mini", userH.ListMini)
+
+	// === SCHEDULES ===
+	// GET (lihat jadwal) – semua login; agent dibatasi di handler
+	secured.GET("/schedules/monthly", schedH.ListMonthly)
+	secured.GET("/schedules/monthly-all", schedH.ListMonthlyAll)
+
+	// Create/Update/Delete – role tertentu saja
+	schedAdmin := secured.Group("/schedules")
+	schedAdmin.Use(middleware.RequireRoles(string(domain.RoleHRAdmin), string(domain.RoleTL), string(domain.RoleSuperAdmin)))
+	schedAdmin.POST("", schedH.Create)
+	schedAdmin.PUT("/:id", schedH.Update)
+	schedAdmin.DELETE("/:id", schedH.Delete)
+
 	// FINDINGS
-	// QC (dan SPV/TL/HR) boleh create/delete/list; Agent hanya bisa list miliknya (handler enforce)
 	findingsGroup := secured.Group("/findings")
 	findingsGroup.Use(middleware.RequireRoles(
 		string(domain.RoleQC), string(domain.RoleSPV), string(domain.RoleTL), string(domain.RoleHRAdmin), string(domain.RoleSuperAdmin),
-		// Agent tidak disertakan di sini karena Agent tidak boleh create/delete;
-		// tapi Agent boleh GET /findings (handler akan enforce miliknya) → buat grup GET khusus tanpa RequireRoles
 	))
 	findingsGroup.POST("", findingH.Create)
 	findingsGroup.DELETE("/:id", findingH.Delete)
-
-	// GET bisa diakses siapa pun yang login (Agent/backoffice), handler akan enforce agent visibility
 	secured.GET("/findings", findingH.List)
 
-	// GROUP: Lateness
-	// Create/Delete oleh HR, SPV, TL, SUPER_ADMIN
+	// Lateness
 	latGroup := secured.Group("/lateness")
 	latGroup.Use(middleware.RequireRoles(
 		string(domain.RoleHRAdmin),
@@ -78,41 +88,24 @@ func Setup(
 	))
 	latGroup.POST("", lateH.Create)
 	latGroup.DELETE("/:id", lateH.Delete)
-
-	// GET bisa diakses siapa pun yang login (Agent hanya miliknya)
 	secured.GET("/lateness", lateH.List)
 
-	// SCHEDULES
-	// GET monthly: semua login; agent hanya miliknya (handler enforce)
-	secured.GET("/schedules/monthly", schedH.ListMonthly)
-	// (opsional) create/update schedule khusus HR/TL/SUPER_ADMIN
-	schedAdmin := secured.Group("/schedules")
-	schedAdmin.Use(middleware.RequireRoles(string(domain.RoleHRAdmin), string(domain.RoleTL), string(domain.RoleSuperAdmin)))
-	schedAdmin.POST("", schedH.Create)
-	schedAdmin.PUT("/:id", schedH.Update)
-	schedAdmin.DELETE("/:id", schedH.Delete)
-
-	// LEAVE REQUESTS
-	// create: semua login boleh
+	// Leave
 	secured.POST("/leave-requests", leaveH.Create)
-	// approve/reject: HR only
 	leaveAdmin := secured.Group("/leave-requests")
 	leaveAdmin.Use(middleware.RequireRoles(string(domain.RoleHRAdmin), string(domain.RoleSuperAdmin)))
 	leaveAdmin.PATCH("/:id/approve", leaveH.Approve)
 	leaveAdmin.PATCH("/:id/reject", leaveH.Reject)
 
-	// SWAP REQUESTS
-	// create/list: semua login (agent buat; yang lain bisa lihat)
+	// Swaps
 	secured.POST("/swaps", swapH.Create)
 	secured.GET("/swaps", swapH.List)
-	// accept: khusus AGENT
 	swapAgent := secured.Group("/swaps")
 	swapAgent.Use(middleware.RequireRoles(string(domain.RoleAgent)))
 	swapAgent.PATCH("/:id/accept", swapH.Accept)
 	swapAgent.PATCH("/:id/cancel", swapH.Cancel)
 
-	// NOTIFICATIONS
+	// Notifications
 	secured.GET("/notifications", notifH.ListMine)
 	secured.PATCH("/notifications/:id/read", notifH.MarkRead)
-
 }

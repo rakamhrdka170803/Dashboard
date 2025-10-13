@@ -9,6 +9,7 @@ export default function AgentLayout() {
   const items = [
     { label:"Home", to:"/agent", end:true },
     { label:"Jadwal", to:"/agent/schedule" },
+    { label:"Jadwal (Semua)", to:"/agent/schedules-all" },
     { label:"Pengajuan Tukar", to:"/agent/swap", badge:"unread" }, // badge untuk notif
   ];
 

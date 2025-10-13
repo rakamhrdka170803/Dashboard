@@ -1,17 +1,27 @@
-import { Navigate, Outlet } from "react-router-dom";
+import React from "react";
+import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthProvider";
 
-export default function ProtectedRoute({ allowRoles = [] }) {
-  const { user } = useAuth();
-  if (!user) return <Navigate to="/login" replace />;
+export default function ProtectedRoute({ allowRoles }) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
 
-  if (allowRoles.length) {
-    const roles = user.roles || [];
-    const allowed = roles.some((r) => allowRoles.includes(r));
-    if (!allowed) {
-      if (roles.includes("AGENT")) return <Navigate to="/agent" replace />;
-      return <Navigate to="/backoffice" replace />;
+  // masih cek session → jangan tendang dulu
+  if (loading) return null;
+
+  // belum login
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  // kalau route batasi role
+  if (Array.isArray(allowRoles) && allowRoles.length > 0) {
+    const has = (user.roles || []).some(r => allowRoles.includes(r));
+    if (!has) {
+      // tidak punya akses → kirim ke landing sesuai role
+      return <Navigate to="/landing" replace />;
     }
   }
+
   return <Outlet />;
 }

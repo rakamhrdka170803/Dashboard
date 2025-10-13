@@ -10,9 +10,14 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type SwapHandler struct{ svc *service.SwapService }
+type SwapHandler struct {
+	svc   *service.SwapService
+	sched *service.ScheduleService
+}
 
-func NewSwapHandler(s *service.SwapService) *SwapHandler { return &SwapHandler{svc: s} }
+func NewSwapHandler(s *service.SwapService, sched *service.ScheduleService) *SwapHandler {
+	return &SwapHandler{svc: s, sched: sched}
+}
 
 type createSwapReq struct {
 	StartAt string `json:"start_at" binding:"required"` // RFC3339, contoh: 2025-10-07T19:00:00+07:00
@@ -71,33 +76,51 @@ func (h *SwapHandler) Accept(c *gin.Context) {
 
 // GET /swaps?page=&size=  (semua yang login bisa lihat daftar swap — kamu sudah enforce role di router)
 func (h *SwapHandler) List(c *gin.Context) {
-	page, size := 1, 10
-	if v := c.Query("page"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			page = n
-		}
+	pageStr := c.DefaultQuery("page", "1")
+	sizeStr := c.DefaultQuery("size", "20")
+	page, _ := strconv.Atoi(pageStr)
+	size, _ := strconv.Atoi(sizeStr)
+	if page < 1 {
+		page = 1
 	}
-	if v := c.Query("size"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
-			size = n
-		}
+	if size < 1 || size > 200 {
+		size = 20
 	}
 
-	items, total, err := h.svc.ListAll(page, size)
+	swaps, total, err := h.svc.ListAll(page, size)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	out := make([]gin.H, 0, len(items))
-	for _, it := range items {
+	out := make([]gin.H, 0, len(swaps))
+	for _, s := range swaps {
+		// default nilai channel kosong
+		var ch string
+		// ambil channel dari jadwal requester di window swap (jika ketemu)
+		if s.RequesterID != 0 && !s.StartAt.IsZero() && !s.EndAt.IsZero() {
+			if sch, err := h.sched.FindByUserAndWindow(s.RequesterID, s.StartAt, s.EndAt); err == nil && sch != nil {
+				ch = string(sch.Channel)
+			}
+		}
+
 		out = append(out, gin.H{
-			"id": it.ID, "requester_id": it.RequesterID,
-			"start_at": it.StartAt, "end_at": it.EndAt,
-			"reason": it.Reason, "status": it.Status, "counterparty_id": it.CounterpartyID,
+			"id":              s.ID,
+			"requester_id":    s.RequesterID,
+			"counterparty_id": s.CounterpartyID,
+			"start_at":        s.StartAt,
+			"end_at":          s.EndAt,
+			"reason":          s.Reason,
+			"status":          s.Status,
+			"channel":         ch, // <— tambahkan di payload
+			"created_at":      s.CreatedAt,
+			"updated_at":      s.UpdatedAt,
 		})
 	}
-	c.JSON(http.StatusOK, gin.H{"page": page, "size": size, "total": total, "items": out})
+
+	c.JSON(http.StatusOK, gin.H{
+		"page": page, "size": size, "total": total, "items": out,
+	})
 }
 
 // PATCH /swaps/:id/cancel  (hanya pengaju yang boleh cancel saat status PENDING)

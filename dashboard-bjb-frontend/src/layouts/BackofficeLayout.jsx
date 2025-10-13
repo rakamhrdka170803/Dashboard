@@ -1,3 +1,4 @@
+// src/layouts/BackofficeLayout.jsx
 import { Outlet } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
@@ -8,7 +9,8 @@ export default function BackofficeLayout() {
 
   const items = [
     { label:"Home", to:"/backoffice", end:true, badge:"unread" },
-    { label:"Kalender Jadwal", to:"/backoffice/schedules" },
+    { label:"Kalender Pribadi", to:"/backoffice/schedule" }, // per-agent (lama)
+    { label:"Jadwal (Semua)", to:"/backoffice/schedules" },  // matrix (baru)
   ];
 
   return (

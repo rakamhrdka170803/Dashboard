@@ -6,15 +6,21 @@ import (
 	"time"
 
 	"bjb-backoffice/internal/domain"
+	"bjb-backoffice/internal/repository"
 	"bjb-backoffice/internal/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 )
 
-type ScheduleHandler struct{ svc *service.ScheduleService }
+type ScheduleHandler struct {
+	svc   *service.ScheduleService
+	users repository.UserRepository // <-- untuk ambil full_name
+}
 
-func NewScheduleHandler(s *service.ScheduleService) *ScheduleHandler { return &ScheduleHandler{svc: s} }
+func NewScheduleHandler(s *service.ScheduleService, ur repository.UserRepository) *ScheduleHandler {
+	return &ScheduleHandler{svc: s, users: ur}
+}
 
 type createScheduleReq struct {
 	UserID    uint               `json:"user_id" binding:"required"`
@@ -117,6 +123,7 @@ func (h *ScheduleHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
+// GET /schedules/monthly — RBAC: Agent hanya miliknya; backoffice bisa pilih ?user_id atau semua
 func (h *ScheduleHandler) ListMonthly(c *gin.Context) {
 	monthStr := c.DefaultQuery("month", time.Now().Format("2006-01"))
 	t, err := time.Parse("2006-01", monthStr)
@@ -125,7 +132,7 @@ func (h *ScheduleHandler) ListMonthly(c *gin.Context) {
 		return
 	}
 
-	// RBAC visibility: agent hanya boleh lihat miliknya, backoffice bisa lihat semua atau lewat ?user_id
+	// RBAC visibility: agent hanya boleh lihat miliknya
 	var userID *uint
 	if q := c.Query("user_id"); q != "" {
 		if n, err := strconv.Atoi(q); err == nil {
@@ -133,6 +140,7 @@ func (h *ScheduleHandler) ListMonthly(c *gin.Context) {
 			userID = &u
 		}
 	}
+
 	val, _ := c.Get("claims")
 	claims := val.(jwt.MapClaims)
 	isAgent := false
@@ -176,6 +184,41 @@ func (h *ScheduleHandler) ListMonthly(c *gin.Context) {
 		out = append(out, gin.H{
 			"id": it.ID, "user_id": it.UserID,
 			"start_at": it.StartAt, "end_at": it.EndAt,
+			"channel":    it.Channel,
+			"shift_name": it.ShiftName, "notes": it.Notes,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"month": monthStr, "items": out})
+}
+
+// GET /schedules/monthly-all — semua user untuk matrix; tambahkan user_full_name
+func (h *ScheduleHandler) ListMonthlyAll(c *gin.Context) {
+	monthStr := c.DefaultQuery("month", time.Now().Format("2006-01"))
+	t, err := time.Parse("2006-01", monthStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid month"})
+		return
+	}
+
+	items, err := h.svc.ListMonthly(nil, t) // nil => semua user
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// ambil nama user → map[id]full_name
+	users, _, _ := h.users.List(1, 5000)
+	names := make(map[uint]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.FullName
+	}
+
+	out := make([]gin.H, 0, len(items))
+	for _, it := range items {
+		out = append(out, gin.H{
+			"id": it.ID, "user_id": it.UserID,
+			"user_full_name": names[it.UserID],
+			"start_at":       it.StartAt, "end_at": it.EndAt,
 			"channel":    it.Channel,
 			"shift_name": it.ShiftName, "notes": it.Notes,
 		})

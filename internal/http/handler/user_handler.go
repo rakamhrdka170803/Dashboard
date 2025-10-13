@@ -283,3 +283,51 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
+
+// handler/user_handler.go
+func hasRole(u *domain.User, rn domain.RoleName) bool {
+	for _, r := range u.Roles {
+		if r.Name == rn {
+			return true
+		}
+	}
+	return false
+}
+
+// GET /api/v1/users/mini?only_agents=true
+func (h *UserHandler) ListMini(c *gin.Context) {
+	page, size := 1, 500
+	if v := c.Query("page"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			page = n
+		}
+	}
+	if v := c.Query("size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 2000 {
+			size = n
+		}
+	}
+
+	// default: hanya agent
+	onlyAgents := c.DefaultQuery("only_agents", "true") == "true"
+
+	users, _, err := h.svc.List(page, size) // preload roles di repo agar Roles terisi
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	out := make([]gin.H, 0, len(users))
+	for i := range users {
+		u := &users[i]
+		if onlyAgents && !hasRole(u, domain.RoleAgent) {
+			continue
+		}
+		out = append(out, gin.H{
+			"id":        u.ID,
+			"full_name": u.FullName,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"items": out})
+}

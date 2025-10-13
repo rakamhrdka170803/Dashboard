@@ -51,9 +51,9 @@ func main() {
 	userH := handler.NewUserHandler(userSvc)
 	findingH := handler.NewFindingHandler(findingSvc)
 	lateH := handler.NewLatenessHandler(lateSvc)
-	schedH := handler.NewScheduleHandler(schedSvc)
+	schedH := handler.NewScheduleHandler(schedSvc, userRepo)
 	leaveH := handler.NewLeaveHandler(leaveSvc)
-	swapH := handler.NewSwapHandler(swapSvc)
+	swapH := handler.NewSwapHandler(swapSvc, schedSvc)
 	notifH := handler.NewNotificationHandler(notifSvc)
 
 	r := gin.Default()

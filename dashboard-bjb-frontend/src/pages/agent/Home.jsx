@@ -43,27 +43,6 @@ export default function AgentHome(){
           ))}
         </ul>
       </section>
-
-      <section className="card">
-        <h3 style={{marginTop:0}}>Notifikasi</h3>
-        <div style={{display:"grid", gap:8}}>
-          {notifs.length===0 && <div className="helper">Belum ada notifikasi.</div>}
-          {notifs.map(n => (
-            <div key={n.id} style={{
-              border:"1px solid #E5E7EB", borderRadius:12, padding:12,
-              background: n.is_read ? "#fff" : "linear-gradient(135deg,#FFF8E1,#FFF)"
-            }}>
-              <div style={{fontWeight:700}}>{n.title}</div>
-              <div className="helper">{n.body}</div>
-              {!n.is_read && (
-                <button className="btn" style={{width:120, marginTop:8}} onClick={()=>setRead(n.id)}>
-                  Tandai dibaca
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 }
