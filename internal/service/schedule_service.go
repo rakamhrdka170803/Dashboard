@@ -34,15 +34,18 @@ func (s *ScheduleService) Create(in CreateScheduleInput) (*domain.Schedule, erro
 	if in.Channel != domain.ChannelVoice && in.Channel != domain.ChannelSosmed {
 		return nil, errors.New("channel must be VOICE or SOSMED")
 	}
-	// anti-overlap
 	if ok, err := s.schedules.ExistsOverlap(in.UserID, in.StartAt, in.EndAt, nil); err != nil {
 		return nil, err
 	} else if ok {
 		return nil, errors.New("schedule overlaps existing slot")
 	}
 	m := &domain.Schedule{
-		UserID: in.UserID, StartAt: in.StartAt, EndAt: in.EndAt,
-		Channel: in.Channel, ShiftName: in.ShiftName, Notes: in.Notes,
+		UserID:    in.UserID,
+		StartAt:   in.StartAt,
+		EndAt:     in.EndAt,
+		Channel:   in.Channel,
+		ShiftName: in.ShiftName,
+		Notes:     in.Notes,
 	}
 	if err := s.schedules.Create(m); err != nil {
 		return nil, err
@@ -73,20 +76,25 @@ func (s *ScheduleService) FindByID(id uint) (*domain.Schedule, error) {
 	return s.schedules.FindByID(id)
 }
 
-func (s *ScheduleService) Delete(id uint) error {
-	return s.schedules.Delete(id)
-}
+func (s *ScheduleService) Delete(id uint) error { return s.schedules.Delete(id) }
 
 func (s *ScheduleService) ExistsOverlap(userID uint, start, end time.Time, excludeID *uint) (bool, error) {
 	return s.schedules.ExistsOverlap(userID, start, end, excludeID)
 }
 
-// service/schedule.go (tambahkan)
 func (s *ScheduleService) FindByUserAndWindow(userID uint, start, end time.Time) (*domain.Schedule, error) {
 	return s.schedules.FindByUserAndWindow(userID, start, end)
 }
 
-// Swap 2 schedule secara atomik: reqSch (punyanya requester) <-> cpSch (punyanya counterparty).
+func (s *ScheduleService) FindByUserAndOverlap(userID uint, start, end time.Time) (*domain.Schedule, error) {
+	return s.schedules.FindByUserAndOverlap(userID, start, end)
+}
+
+func (s *ScheduleService) FindByUserAndSameDay(userID uint, dayStart, dayEnd time.Time) (*domain.Schedule, error) {
+	return s.schedules.FindByUserAndSameDay(userID, dayStart, dayEnd)
+}
+
+// Swap 2 schedule atomik
 func (s *ScheduleService) SwapSchedules(reqSchID, cpSchID uint, requesterID, counterpartyID uint) error {
 	reqSch, err := s.schedules.FindByID(reqSchID)
 	if err != nil {
@@ -102,27 +110,19 @@ func (s *ScheduleService) SwapSchedules(reqSchID, cpSchID uint, requesterID, cou
 	if cpSch.UserID != counterpartyID {
 		return errors.New("counterparty schedule owner mismatch")
 	}
-
-	// Tolak jika window sama persis (aturan #4 tukar dinas)
 	if reqSch.StartAt.Equal(cpSch.StartAt) && reqSch.EndAt.Equal(cpSch.EndAt) {
 		return errors.New("tidak bisa approve: kedua agent punya jadwal pada jam & hari yang sama")
 	}
-
-	// Validasi overlap setelah ditukar:
-	// requester akan menerima cpSch → cek overlap di requester, exclude reqSch.ID (karena reqSch keluar)
 	if ok, err := s.schedules.ExistsOverlap(requesterID, cpSch.StartAt, cpSch.EndAt, &reqSch.ID); err != nil {
 		return err
 	} else if ok {
 		return errors.New("swap invalid: jadwal baru requester bentrok")
 	}
-	// counterparty akan menerima reqSch → cek overlap di cp, exclude cpSch.ID
 	if ok, err := s.schedules.ExistsOverlap(counterpartyID, reqSch.StartAt, reqSch.EndAt, &cpSch.ID); err != nil {
 		return err
 	} else if ok {
 		return errors.New("swap invalid: jadwal baru counterparty bentrok")
 	}
-
-	// Commit atomik: tukar owner 2 schedule
 	return s.schedules.Tx(func(tx *gorm.DB) error {
 		reqSch.UserID = counterpartyID
 		if err := tx.Save(reqSch).Error; err != nil {

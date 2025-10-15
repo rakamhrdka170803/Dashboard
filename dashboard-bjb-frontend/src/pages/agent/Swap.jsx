@@ -1,14 +1,15 @@
-// src/pages/agent/AgentSwap.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
 import { createSwap, listSwaps, acceptSwap, cancelSwap } from "../../api/swaps";
 import { listMonthly } from "../../api/schedules";
 import { useAuth } from "../../context/AuthProvider";
+import { listUsersMini } from "../../api/users";
 
 export default function AgentSwap() {
   const { user } = useAuth();
   const isAgent = (user?.roles || []).includes("AGENT");
   const myId = user?.id;
+  const [nameById, setNameById] = useState({});
 
   // ---- State ----
   const [month, setMonth] = useState(dayjs().format("YYYY-MM"));
@@ -45,6 +46,10 @@ export default function AgentSwap() {
     const rows = (items || []).filter(
       (it) => it.status === "PENDING" && it.requester_id !== myId
     );
+    // logging channel agar gampang trace
+    rows.forEach((r) => {
+      if (!r.channel) console.debug("[agent-swap] pendingOthers channel kosong:", r);
+    });
     setPendingOthers(rows);
   };
 
@@ -60,27 +65,43 @@ export default function AgentSwap() {
     await Promise.all([loadMySchedules(), loadPendingOthers(), loadMyPending()]);
   };
 
-  useEffect(() => { loadMySchedules(); }, [month]);
-  useEffect(() => { loadPendingOthers(); loadMyPending(); }, [myId]);
+  useEffect(() => {
+    loadMySchedules();
+  }, [month]);
+
+  useEffect(() => {
+    loadPendingOthers();
+    loadMyPending();
+  }, [myId]);
 
   // ---- Actions ----
   const submitSwap = async (e) => {
     e.preventDefault();
-    if (!isAgent) { setMsg("Hanya agent yang dapat mengajukan."); return; }
-    if (!selectedSch) { setMsg("Pilih salah satu jadwal Anda."); return; }
+    if (!isAgent) {
+      setMsg("Hanya agent yang dapat mengajukan.");
+      return;
+    }
+    if (!selectedSch) {
+      setMsg("Pilih salah satu jadwal Anda.");
+      return;
+    }
 
-    setSubmitting(true); setMsg("");
+    setSubmitting(true);
+    setMsg("");
     try {
       await createSwap({
         start_at: dayjs(selectedSch.start_at).toISOString(),
         reason: reason.trim(),
       });
       setMsg("Swap berhasil diajukan. Menunggu agent lain meng-accept.");
-      setReason(""); setSelectedMySchForRequest("");
+      setReason("");
+      setSelectedMySchForRequest("");
       await loadMyPending();
     } catch (err) {
       setMsg(err?.response?.data?.error || "Gagal mengajukan swap.");
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const openAcceptModal = (swap) => {
@@ -126,6 +147,21 @@ export default function AgentSwap() {
     }
   };
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await listUsersMini({});
+        const m = {};
+        (r.items || []).forEach((u) => (m[u.id] = u.full_name || `Agent #${u.id}`));
+        setNameById(m);
+      } catch {
+        setNameById({});
+      }
+    })();
+  }, []);
+
+  const ch = (v) => (v && String(v).trim() !== "" ? v : "—");
+
   // ---- Render ----
   return (
     <div style={{ padding: 16, display: "grid", gap: 24 }}>
@@ -155,7 +191,7 @@ export default function AgentSwap() {
                   <option key={s.id} value={s.id}>
                     #{s.id} • {dayjs(s.start_at).format("DD MMM")}{" "}
                     {dayjs(s.start_at).format("HH:mm")}–
-                    {dayjs(s.end_at).format("HH:mm")} ({s.channel})
+                    {dayjs(s.end_at).format("HH:mm")} ({ch(s.channel)})
                   </option>
                 ))}
             </select>
@@ -186,23 +222,40 @@ export default function AgentSwap() {
       <section className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0 }}>Pengajuan Saya (Pending)</h3>
-          <button className="btn" style={{ width: 160 }} onClick={loadMyPending}>Refresh</button>
+          <button className="btn" style={{ width: 160 }} onClick={loadMyPending}>
+            Refresh
+          </button>
         </div>
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           {myPending.length === 0 && <div className="helper">Tidak ada pengajuan pending.</div>}
           {myPending.map((sw) => (
-            <div key={sw.id} style={{ border: "1px solid #E5E7EB", borderRadius: 12, padding: 12 }}>
-              <div><b>Swap #{sw.id}</b></div>
+            <div
+              key={sw.id}
+              style={{
+                border: "1px solid #E5E7EB",
+                borderRadius: 12,
+                padding: 12,
+                display: "grid",
+                gap: 6,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <b>Swap #{sw.id}</b>{" "}
+                  <span className="helper">• Channel: {ch(sw.channel)}</span>
+                </div>
+                <button
+                  className="btn"
+                  style={{ width: 120, border: "1px solid #E11D48", background: "#fff", color: "#E11D48" }}
+                  onClick={() => cancelMySwap(sw)}
+                >
+                  Batalkan
+                </button>
+              </div>
               <div className="helper">
                 Window: {dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}
               </div>
-              <button
-                className="btn"
-                style={{ width: 140, border: "1px solid #E11D48", background: "#fff", color: "#E11D48" }}
-                onClick={() => cancelMySwap(sw)}
-              >
-                Batalkan
-              </button>
+              {sw.reason && <div className="helper">Alasan: {sw.reason}</div>}
             </div>
           ))}
         </div>
@@ -212,30 +265,51 @@ export default function AgentSwap() {
       <section className="card">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <h3 style={{ margin: 0 }}>Permintaan Swap dari Orang Lain (Pending)</h3>
-          <button className="btn" style={{ width: 160 }} onClick={loadPendingOthers}>Refresh</button>
+          <button className="btn" style={{ width: 160 }} onClick={loadPendingOthers}>
+            Refresh
+          </button>
         </div>
         <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
           {pendingOthers.length === 0 && <div className="helper">Tidak ada permintaan.</div>}
           {pendingOthers.map((sw) => (
-            <div key={sw.id} style={{ border: "1px solid #E5E7EB", borderRadius: 12, padding: 12, display: "grid", gap: 6 }}>
-              <div><b>Swap #{sw.id}</b> • Pengaju: Agent #{sw.requester_id}</div>
+            <div
+              key={sw.id}
+              style={{
+                border: "1px solid #E5E7EB",
+                borderRadius: 12,
+                padding: 12,
+                display: "grid",
+                gap: 6,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+                <div>
+                  <b>Swap #{sw.id}</b>{" "}
+                  <span className="helper">
+                    • Pengaju: {nameById[sw.requester_id] || `Agent #${sw.requester_id}`} • Channel: {ch(sw.channel)}
+                  </span>
+                </div>
+                {isAgent && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button className="btn" style={{ width: 120 }} onClick={() => openAcceptModal(sw)}>
+                      Accept
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ width: 120, background: "linear-gradient(135deg,#9CA3AF,#6B7280)" }}
+                      onClick={() =>
+                        alert("Tidak bisa menolak permintaan orang lain. Abaikan saja jika tidak ingin menerima.")
+                      }
+                    >
+                      Lewati
+                    </button>
+                  </div>
+                )}
+              </div>
               <div className="helper">
                 Window: {dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}
               </div>
-              {isAgent && (
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="btn" style={{ width: 140 }} onClick={() => openAcceptModal(sw)}>
-                    Accept
-                  </button>
-                  <button
-                    className="btn"
-                    style={{ width: 140, background: "linear-gradient(135deg,#9CA3AF,#6B7280)" }}
-                    onClick={() => alert("Tidak bisa menolak permintaan orang lain. Abaikan saja jika tidak ingin menerima.")}
-                  >
-                    Lewati
-                  </button>
-                </div>
-              )}
+              {sw.reason && <div className="helper">Alasan: {sw.reason}</div>}
             </div>
           ))}
         </div>
@@ -266,12 +340,14 @@ export default function AgentSwap() {
           <tbody>
             {mySchedules.map((it) => (
               <tr key={it.id} style={{ borderTop: "1px solid #F3F4F6" }}>
-                <td style={{ padding: "8px 6px" }}><b>{it.id}</b></td>
+                <td style={{ padding: "8px 6px" }}>
+                  <b>{it.id}</b>
+                </td>
                 <td style={{ padding: "8px 6px" }}>{dayjs(it.start_at).format("DD MMM YYYY")}</td>
                 <td style={{ padding: "8px 6px" }}>
                   {dayjs(it.start_at).format("HH:mm")}–{dayjs(it.end_at).format("HH:mm")}
                 </td>
-                <td style={{ padding: "8px 6px" }}>{it.channel}</td>
+                <td style={{ padding: "8px 6px" }}>{ch(it.channel)}</td>
                 <td style={{ padding: "8px 6px" }}>{it.shift_name || it.notes || "-"}</td>
               </tr>
             ))}
@@ -320,7 +396,7 @@ export default function AgentSwap() {
                   <option key={s.id} value={s.id}>
                     #{s.id} • {dayjs(s.start_at).format("DD MMM")}{" "}
                     {dayjs(s.start_at).format("HH:mm")}–
-                    {dayjs(s.end_at).format("HH:mm")} ({s.channel})
+                    {dayjs(s.end_at).format("HH:mm")} ({ch(s.channel)})
                   </option>
                 ))}
             </select>

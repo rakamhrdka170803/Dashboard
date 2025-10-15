@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"bjb-backoffice/internal/domain"
@@ -10,208 +9,124 @@ import (
 )
 
 type SwapService struct {
-	swaps     repository.SwapRepository
-	schedules *ScheduleService
-	notif     *NotificationService
-	users     repository.UserRepository
+	repo  repository.SwapRepository
+	sched *ScheduleService
+	notif *NotificationService // opsional — kamu sudah punya di main
+	users repository.UserRepository
 }
 
-func NewSwapService(swaps repository.SwapRepository, schedules *ScheduleService, notif *NotificationService, users repository.UserRepository) *SwapService {
-	return &SwapService{swaps: swaps, schedules: schedules, notif: notif, users: users}
+func NewSwapService(
+	repo repository.SwapRepository,
+	sched *ScheduleService,
+	notif *NotificationService,
+	users repository.UserRepository,
+) *SwapService {
+	return &SwapService{repo: repo, sched: sched, notif: notif, users: users}
 }
 
-type CreateSwapInput struct {
-	RequesterID uint
-	StartAt     time.Time
-	Reason      string
-}
-
-func (s *SwapService) CreateFromRFC3339(requester uint, startRFC3339, reason string) (*domain.SwapRequest, error) {
-	st, err := time.Parse(time.RFC3339, startRFC3339)
+// Buat swap dari RFC3339 start_at (end_at default +8 jam)
+func (s *SwapService) CreateFromRFC3339(requester uint, startRFC3339 string, reason string) (*domain.SwapRequest, error) {
+	if requester == 0 {
+		return nil, errors.New("invalid requester")
+	}
+	start, err := time.Parse(time.RFC3339, startRFC3339)
 	if err != nil {
-		return nil, errors.New("invalid start_at")
+		return nil, errors.New("start_at invalid RFC3339")
 	}
-	return s.Create(CreateSwapInput{RequesterID: requester, StartAt: st, Reason: reason})
-}
+	end := start.Add(8 * time.Hour)
 
-// helper kecil supaya body notif bisa memuat nama manusiawi
-// helper kecil supaya body notif bisa memuat nama manusiawi
-// helper tetap:
-func (s *SwapService) displayName(uid uint) string {
-	u, _ := s.users.FindByID(uid)
-	if u != nil && u.FullName != "" {
-		return u.FullName
+	// Pastikan requester memang punya jadwal di window tsb (opsional, tapi bagus)
+	if ok, err := s.sched.ExistsOverlap(requester, start, end, nil); err != nil {
+		return nil, err
+	} else if !ok {
+		// tidak ada jadwal — tetap boleh request? Kalau mau strict, return error:
+		// return nil, errors.New("anda tidak punya jadwal pada window ini")
 	}
-	return fmt.Sprintf("Agent #%d", uid) // fallback
-}
-
-func (s *SwapService) Create(in CreateSwapInput) (*domain.SwapRequest, error) {
-	if in.RequesterID == 0 {
-		return nil, errors.New("requester required")
-	}
-	endAt := in.StartAt.Add(8 * time.Hour)
 
 	m := &domain.SwapRequest{
-		RequesterID: in.RequesterID,
-		StartAt:     in.StartAt,
-		EndAt:       endAt,
-		Reason:      in.Reason,
+		RequesterID: requester,
+		StartAt:     start,
+		EndAt:       end,
+		Reason:      reason,
 		Status:      domain.SwapPending,
 	}
-	if err := s.swaps.Create(m); err != nil {
+	if err := s.repo.Create(m); err != nil {
 		return nil, err
 	}
 
-	// Broadcast ke semua user lain (sederhana). Body dibuat lebih informatif.
-	reqName := s.displayName(in.RequesterID)
-	startStr := in.StartAt.Format("02 Jan 06 15:04")
-	endStr := endAt.Format("02 Jan 06 15:04")
+	// Notif ke calon penerima? (opsional)
+	// _ = s.notif.SwapRequested(...)
 
-	users, _, _ := s.users.List(1, 1000)
-	for _, u := range users {
-		if u.ID == in.RequesterID {
-			continue
-		}
-		_ = s.notif.Notify(
-			u.ID,
-			"Permintaan Tukar Dinas/Libur",
-			fmt.Sprintf("%s mengajukan tukar %s–%s (±8 jam)", reqName, startStr, endStr),
-			"SWAP",
-			&m.ID,
-		)
-	}
 	return m, nil
 }
 
-// Accept: tukar kepemilikan 2 schedule (requester window ↔ counterparty_schedule_id)
-func (s *SwapService) Accept(swapID uint, counterpartyID uint, counterpartyScheduleID uint) (*domain.SwapRequest, error) {
-	m, err := s.swaps.FindByID(swapID)
+// Agent penerima menyetujui, pilih schedule miliknya untuk ditukar
+func (s *SwapService) Accept(id uint, me uint, counterpartyScheduleID uint) (*domain.SwapRequest, error) {
+	if me == 0 || counterpartyScheduleID == 0 {
+		return nil, errors.New("invalid parameters")
+	}
+
+	sw, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
-	if m.Status != domain.SwapPending {
-		return nil, errors.New("status not pending")
-	}
-	if m.RequesterID == counterpartyID {
-		return nil, errors.New("requester cannot accept their own swap")
+	if sw.Status != domain.SwapPending {
+		return nil, errors.New("swap bukan PENDING")
 	}
 
-	requesterID := m.RequesterID
-	cpID := counterpartyID
-	start, end := m.StartAt, m.EndAt
-
-	// Jadwal requester pada window swap (harus ada)
-	reqMonthSch, _ := s.schedules.ListMonthly(&requesterID, start)
-	var reqExact *domain.Schedule
-	for i := range reqMonthSch {
-		if reqMonthSch[i].StartAt.Equal(start) && reqMonthSch[i].EndAt.Equal(end) {
-			reqExact = &reqMonthSch[i]
-			break
+	// Cari schedule milik requester pada window swap (utk di-swap dengan milik me)
+	reqSch, err := s.sched.FindByUserAndOverlap(sw.RequesterID, sw.StartAt, sw.EndAt)
+	if err != nil {
+		// fallback exact
+		if reqSch, err = s.sched.FindByUserAndWindow(sw.RequesterID, sw.StartAt, sw.EndAt); err != nil {
+			// fallback same-day
+			dayStart := time.Date(sw.StartAt.Year(), sw.StartAt.Month(), sw.StartAt.Day(), 0, 0, 0, 0, sw.StartAt.Location())
+			dayEnd := dayStart.Add(24 * time.Hour)
+			if reqSch, err = s.sched.FindByUserAndSameDay(sw.RequesterID, dayStart, dayEnd); err != nil {
+				return nil, errors.New("jadwal requester tidak ditemukan untuk window ini")
+			}
 		}
 	}
-	if reqExact == nil {
-		return nil, errors.New("requester tidak memiliki jadwal pada window swap")
-	}
 
-	// Jadwal yang dipilih penerima
-	cpSch, err := s.schedules.FindByID(counterpartyScheduleID)
-	if err != nil {
-		return nil, err
-	}
-	if cpSch.UserID != cpID {
-		return nil, errors.New("jadwal yang dipilih bukan milik penerima")
-	}
-	// Aturan: jika kedua window sama persis → TOLAK
-	if cpSch.StartAt.Equal(start) && cpSch.EndAt.Equal(end) {
-		return nil, errors.New("tidak dapat swap: kedua pihak memiliki window yang sama persis")
-	}
-
-	// Cek overlap setelah ditukar
-	if ok, err := s.schedules.ExistsOverlap(requesterID, cpSch.StartAt, cpSch.EndAt, &reqExact.ID); err != nil {
-		return nil, err
-	} else if ok {
-		return nil, errors.New("swap menyebabkan bentrok pada jadwal requester")
-	}
-	if ok, err := s.schedules.ExistsOverlap(cpID, reqExact.StartAt, reqExact.EndAt, &cpSch.ID); err != nil {
-		return nil, err
-	} else if ok {
-		return nil, errors.New("swap menyebabkan bentrok pada jadwal penerima")
-	}
-
-	// Tukar pemilik 2 schedule
-	reqExact.UserID = cpID
-	cpSch.UserID = requesterID
-	if err := s.schedules.UpdateSchedule(reqExact); err != nil {
-		return nil, err
-	}
-	if err := s.schedules.UpdateSchedule(cpSch); err != nil {
+	// Lakukan swap jadwal
+	if err := s.sched.SwapSchedules(reqSch.ID, counterpartyScheduleID, sw.RequesterID, me); err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
-	m.Status = domain.SwapApproved
-	m.CounterpartyID = &cpID
-	m.ApprovedAt = &now
-	if err := s.swaps.Update(m); err != nil {
+	sw.Status = domain.SwapApproved
+	sw.CounterpartyID = &me
+	sw.ApprovedAt = &now
+
+	if err := s.repo.Update(sw); err != nil {
 		return nil, err
 	}
 
-	// Notifikasi lebih informatif (nama + window waktu)
-	reqName := s.displayName(requesterID)
-	cpName := s.displayName(cpID)
-	startStr := m.StartAt.Format("02 Jan 06 15:04")
-	endStr := m.EndAt.Format("02 Jan 06 15:04")
+	// Notifikasi kedua pihak (opsional)
+	// _ = s.notif.SwapApproved(...)
 
-	_ = s.notif.Notify(
-		requesterID, "Swap Disetujui",
-		fmt.Sprintf("Swap #%d disetujui oleh %s • Window %s–%s", m.ID, cpName, startStr, endStr),
-		"SWAP", &m.ID,
-	)
-	_ = s.notif.Notify(
-		cpID, "Swap Disetujui",
-		fmt.Sprintf("Kamu menerima swap #%d dengan %s • Jadwal telah diperbarui", m.ID, reqName),
-		"SWAP", &m.ID,
-	)
-
-	// Broadcast ke backoffice roles
-	users, _, _ := s.users.List(1, 1000)
-	for _, u := range users {
-		for _, r := range u.Roles {
-			switch r.Name {
-			case domain.RoleSPV, domain.RoleTL, domain.RoleQC, domain.RoleHRAdmin, domain.RoleSuperAdmin:
-				_ = s.notif.Notify(
-					u.ID,
-					"Swap Disetujui",
-					fmt.Sprintf("Swap #%d telah disetujui & jadwal diupdate (Requester %s • Penerima %s)",
-						m.ID, reqName, cpName),
-					"SWAP",
-					&m.ID,
-				)
-			}
-		}
-	}
-	return m, nil
+	return sw, nil
 }
 
-func (s *SwapService) ListAll(page, size int) ([]domain.SwapRequest, int64, error) {
-	return s.swaps.ListAll(page, size)
-}
-
-func (s *SwapService) Cancel(swapID uint, requesterID uint) (*domain.SwapRequest, error) {
-	m, err := s.swaps.FindByID(swapID)
+func (s *SwapService) Cancel(id uint, requester uint) (*domain.SwapRequest, error) {
+	sw, err := s.repo.FindByID(id)
 	if err != nil {
 		return nil, err
 	}
-	if m.RequesterID != requesterID {
-		return nil, errors.New("forbidden")
+	if sw.RequesterID != requester {
+		return nil, errors.New("bukan pengaju")
 	}
-	if m.Status != domain.SwapPending {
-		return nil, errors.New("cannot cancel")
+	if sw.Status != domain.SwapPending {
+		return nil, errors.New("hanya bisa cancel saat PENDING")
 	}
-	m.Status = domain.SwapCancelled
-	if err := s.swaps.Update(m); err != nil {
+	sw.Status = domain.SwapCancelled
+	if err := s.repo.Update(sw); err != nil {
 		return nil, err
 	}
-	// Catatan: tidak mengirim notif saat cancel → sesuai requirement "kalau ditolak jangan jadi notif"
-	return m, nil
+	// _ = s.notif.SwapCancelled(...)
+	return sw, nil
+}
+
+func (s *SwapService) ListAll(page, size int) ([]domain.SwapRequest, int64, error) {
+	return s.repo.ListAll(page, size)
 }

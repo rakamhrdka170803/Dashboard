@@ -7,8 +7,8 @@ import (
 
 	"bjb-backoffice/internal/config"
 	"bjb-backoffice/internal/database"
-	"bjb-backoffice/internal/http/handler"
-	"bjb-backoffice/internal/http/router"
+	httpHandler "bjb-backoffice/internal/http/handler"
+	httpRouter "bjb-backoffice/internal/http/router"
 	"bjb-backoffice/internal/repository"
 	"bjb-backoffice/internal/seed"
 	"bjb-backoffice/internal/service"
@@ -42,22 +42,24 @@ func main() {
 	swapSvc := service.NewSwapService(swapRepo, schedSvc, notifSvc, userRepo)
 
 	// seed roles + super admin
-	seed.Bootstrap(roleRepo, userRepo, userSvc,
+	seed.Bootstrap(
+		roleRepo, userRepo, userSvc,
 		os.Getenv("SEED_SUPERADMIN_EMAIL"),
 		os.Getenv("SEED_SUPERADMIN_PASSWORD"),
 	)
 
-	authH := handler.NewAuthHandler(authSvc)
-	userH := handler.NewUserHandler(userSvc)
-	findingH := handler.NewFindingHandler(findingSvc)
-	lateH := handler.NewLatenessHandler(lateSvc)
-	schedH := handler.NewScheduleHandler(schedSvc, userRepo)
-	leaveH := handler.NewLeaveHandler(leaveSvc)
-	swapH := handler.NewSwapHandler(swapSvc, schedSvc)
-	notifH := handler.NewNotificationHandler(notifSvc)
+	// Handlers
+	authH := httpHandler.NewAuthHandler(authSvc)
+	userH := httpHandler.NewUserHandler(userSvc)
+	findingH := httpHandler.NewFindingHandler(findingSvc)
+	lateH := httpHandler.NewLatenessHandler(lateSvc)
+	schedH := httpHandler.NewScheduleHandler(schedSvc, userRepo)
+	leaveH := httpHandler.NewLeaveHandler(leaveSvc)
+	swapH := httpHandler.NewSwapHandler(swapSvc, schedSvc, userSvc)
+	notifH := httpHandler.NewNotificationHandler(notifSvc)
 
+	// Gin & CORS
 	r := gin.Default()
-
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"http://localhost:5173"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -67,7 +69,12 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	router.Setup(r, authH, userH, findingH, lateH, schedH, leaveH, swapH, notifH, []byte(cfg.JWTSecret))
+	// Router setup
+	httpRouter.Setup(
+		r,
+		authH, userH, findingH, lateH, schedH, leaveH, swapH, notifH,
+		[]byte(cfg.JWTSecret),
+	)
 
 	log.Println("listening on :8080")
 	if err := r.Run(":8080"); err != nil {
