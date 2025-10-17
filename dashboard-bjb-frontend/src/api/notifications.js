@@ -1,6 +1,6 @@
 import api from "./client";
 
-export async function listMyNotifications({ unread = false, limit = 20 } = {}) {
+export async function listMyNotifications({ unread = false, limit = 50 } = {}) {
   const params = new URLSearchParams();
   if (unread) params.set("unread", "true");
   if (limit) params.set("limit", String(limit));
