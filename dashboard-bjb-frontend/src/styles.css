@@ -65,3 +65,28 @@ button{font-family:inherit}
 .link{color:var(--bjb-blue); font-weight:600}
 .card h3{color:var(--bjb-navy)}
 .card h3 { margin: 6px 0 4px; }
+
+/* ===== Agent Swap Page Layout ===== */
+.swap-grid{
+  padding:16px;
+  display:grid;
+  gap:24px;
+  grid-template-columns: 1fr;   /* mobile: 1 kolom */
+  align-items:start;
+}
+.swap-col{
+  display:grid;
+  gap:24px;
+}
+/* desktop: 2 kolom */
+@media (min-width: 992px){
+  .swap-grid{
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* kartu full width khusus halaman swap */
+.card.fluid{
+  max-width: none;  /* override global 420px */
+  width: 100%;
+}
