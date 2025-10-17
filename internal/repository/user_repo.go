@@ -12,9 +12,12 @@ type UserRepository interface {
 	FindByID(id uint) (*domain.User, error)
 	List(page, size int) ([]domain.User, int64, error)
 	AssignRoles(userID uint, roles []domain.Role) error
-	Update(u *domain.User) error                       // 👈 ADD
-	UpdateFields(id uint, fields map[string]any) error // 👈 ADD
+	Update(u *domain.User) error                       // 👈 tetap
+	UpdateFields(id uint, fields map[string]any) error // 👈 tetap
 	Delete(id uint) error
+
+	// 👇 NEW: dipakai untuk broadcast notif ke semua user
+	ListAllIDs() ([]uint, error)
 }
 
 type userRepository struct{ db *gorm.DB }
@@ -28,6 +31,7 @@ func (r *userRepository) FindByEmail(email string) (*domain.User, error) {
 	err := r.db.Preload("Roles").Where("email = ?", email).First(&u).Error
 	return &u, err
 }
+
 func (r *userRepository) FindByID(id uint) (*domain.User, error) {
 	var u domain.User
 	err := r.db.Preload("Roles").First(&u, id).Error
@@ -65,4 +69,13 @@ func (r *userRepository) Update(u *domain.User) error {
 
 func (r *userRepository) UpdateFields(id uint, fields map[string]any) error {
 	return r.db.Model(&domain.User{}).Where("id = ?", id).Updates(fields).Error
+}
+
+// 👇 NEW: ambil semua user.id (tidak peduli role) untuk broadcast
+func (r *userRepository) ListAllIDs() ([]uint, error) {
+	var ids []uint
+	if err := r.db.Model(&domain.User{}).Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
 }

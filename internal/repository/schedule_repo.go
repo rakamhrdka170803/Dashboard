@@ -21,6 +21,8 @@ type ScheduleRepository interface {
 	FindByUserAndWindow(userID uint, start, end time.Time) (*domain.Schedule, error)  // exact
 	FindByUserAndSameDay(userID uint, dayStart, dayEnd time.Time) (*domain.Schedule, error)
 
+	ListUserIDsOverlapSameChannel(start, end time.Time, channel domain.WorkChannel, excludeUserID uint) ([]uint, error)
+
 	Tx(fn func(tx *gorm.DB) error) error
 }
 
@@ -106,6 +108,21 @@ func (r *scheduleRepository) FindByUserAndSameDay(userID uint, dayStart, dayEnd 
 		return nil, gorm.ErrRecordNotFound
 	}
 	return &s, nil
+}
+
+func (r *scheduleRepository) ListUserIDsOverlapSameChannel(start, end time.Time, channel domain.WorkChannel, excludeUserID uint) ([]uint, error) {
+	// Ambil user yang punya jadwal overlap (start_at < end && end_at > start) dengan channel sama
+	q := r.db.Model(&domain.Schedule{}).
+		Where("start_at < ? AND end_at > ?", end, start).
+		Where("channel = ?", channel)
+	if excludeUserID != 0 {
+		q = q.Where("user_id <> ?", excludeUserID)
+	}
+	var ids []uint
+	if err := q.Distinct("user_id").Pluck("user_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 func (r *scheduleRepository) Tx(fn func(tx *gorm.DB) error) error {

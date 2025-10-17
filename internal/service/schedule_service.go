@@ -135,3 +135,27 @@ func (s *ScheduleService) SwapSchedules(reqSchID, cpSchID uint, requesterID, cou
 		return nil
 	})
 }
+
+// ResolveChannelForUser mencoba mendapatkan channel user di window tertentu:
+// urutan: overlap → exact → same-day. Return error kalau tidak ketemu sama sekali.
+// ResolveChannelForUser mencoba mendapatkan channel user di window tertentu:
+// urutan: overlap → exact → same-day. Return error kalau tidak ketemu sama sekali.
+func (s *ScheduleService) ResolveChannelForUser(userID uint, start, end time.Time) (domain.WorkChannel, error) {
+	if sch, err := s.schedules.FindByUserAndOverlap(userID, start, end); err == nil && sch != nil {
+		return sch.Channel, nil
+	}
+	if sch, err := s.schedules.FindByUserAndWindow(userID, start, end); err == nil && sch != nil {
+		return sch.Channel, nil
+	}
+	dayStart := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+	dayEnd := dayStart.Add(24 * time.Hour)
+	if sch, err := s.schedules.FindByUserAndSameDay(userID, dayStart, dayEnd); err == nil && sch != nil {
+		return sch.Channel, nil
+	}
+	return "", gorm.ErrRecordNotFound
+}
+
+// Passthrough untuk method repo baru (biar dipanggil dari SwapService)
+func (s *ScheduleService) ListUserIDsOverlapSameChannel(start, end time.Time, channel domain.WorkChannel, excludeUserID uint) ([]uint, error) {
+	return s.schedules.ListUserIDsOverlapSameChannel(start, end, channel, excludeUserID)
+}
