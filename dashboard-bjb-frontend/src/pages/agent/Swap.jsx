@@ -10,10 +10,7 @@ export default function AgentSwap() {
   const isAgent = (user?.roles || []).includes("AGENT");
   const myId = user?.id;
 
-  // map userId -> full_name (fallback jika requester_name dari BE kosong)
   const [nameById, setNameById] = useState({});
-
-  // ---- State ----
   const [month, setMonth] = useState(dayjs().format("YYYY-MM"));
   const [mySchedules, setMySchedules] = useState([]);
 
@@ -29,15 +26,15 @@ export default function AgentSwap() {
   const [msg, setMsg] = useState("");
 
   // Lists
-  const [pendingOthers, setPendingOthers] = useState([]); // pending milik orang lain
-  const [myPending, setMyPending] = useState([]); // pending pengajuan saya
+  const [pendingOthers, setPendingOthers] = useState([]);
+  const [myPending, setMyPending] = useState([]);
 
   // Modal Accept
   const [acceptOpen, setAcceptOpen] = useState(false);
   const [acceptTarget, setAcceptTarget] = useState(null);
   const [selectedMySchForAccept, setSelectedMySchForAccept] = useState("");
 
-  // ---- Loaders ----
+  // Loaders
   const loadMySchedules = async () => {
     const { items } = await listMonthly({ month });
     setMySchedules(items || []);
@@ -63,26 +60,14 @@ export default function AgentSwap() {
     await Promise.all([loadMySchedules(), loadPendingOthers(), loadMyPending()]);
   };
 
-  useEffect(() => {
-    loadMySchedules();
-  }, [month]);
+  useEffect(() => { loadMySchedules(); }, [month]);
+  useEffect(() => { loadPendingOthers(); loadMyPending(); }, [myId]);
 
-  useEffect(() => {
-    loadPendingOthers();
-    loadMyPending();
-  }, [myId]);
-
-  // ---- Actions ----
+  // Actions
   const submitSwap = async (e) => {
     e.preventDefault();
-    if (!isAgent) {
-      setMsg("Hanya agent yang dapat mengajukan.");
-      return;
-    }
-    if (!selectedSch) {
-      setMsg("Pilih salah satu jadwal Anda.");
-      return;
-    }
+    if (!isAgent) return setMsg("Hanya agent yang dapat mengajukan.");
+    if (!selectedSch) return setMsg("Pilih salah satu jadwal Anda.");
 
     setSubmitting(true);
     setMsg("");
@@ -97,9 +82,7 @@ export default function AgentSwap() {
       await loadMyPending();
     } catch (err) {
       setMsg(err?.response?.data?.error || "Gagal mengajukan swap.");
-    } finally {
-      setSubmitting(false);
-    }
+    } finally { setSubmitting(false); }
   };
 
   const openAcceptModal = (swap) => {
@@ -110,7 +93,6 @@ export default function AgentSwap() {
 
   const candidateForAccept = useMemo(() => {
     if (!acceptTarget) return [];
-    // semua jadwal saya kecuali window yang sama dengan pengaju
     return (mySchedules || []).filter(
       (s) =>
         !(
@@ -145,11 +127,10 @@ export default function AgentSwap() {
     }
   };
 
-  // === Nama user untuk fallback ===
+  // Fallback nama
   useEffect(() => {
     (async () => {
       try {
-        // listUsersMini() mengembalikan array: [{id, full_name}]
         const users = await listUsersMini({});
         const map = {};
         (users || []).forEach((u) => (map[u.id] = u.full_name || `Agent #${u.id}`));
@@ -162,15 +143,18 @@ export default function AgentSwap() {
 
   const dash = (v) => (v && String(v).trim() !== "" ? v : "—");
 
-  // ---- Render ----
+  // Render
   return (
     <div className="swap-grid">
-      {/* ====== KOLOM KIRI ====== */}
+      {/* LEFT */}
       <div className="swap-col">
-        {/* Ajukan Swap */}
+        {/* Ajukan */}
         <section className="card fluid">
-          <h3 style={{ marginTop: 0 }}>Ajukan Tukar Dinas / Libur</h3>
-          <form onSubmit={submitSwap} style={{ display: "grid", gap: 12 }}>
+          <div className="section-head">
+            <h3 className="section-title">Ajukan Tukar Dinas / Libur</h3>
+          </div>
+
+          <form onSubmit={submitSwap} className="vstack-12">
             <div>
               <label className="label">Pilih Jadwal Saya</label>
               <select
@@ -185,206 +169,165 @@ export default function AgentSwap() {
                   .sort((a, b) => new Date(a.start_at) - new Date(b.start_at))
                   .map((s) => (
                     <option key={s.id} value={s.id}>
-                      #{s.id} • {dayjs(s.start_at).format("DD MMM")}{" "}
-                      {dayjs(s.start_at).format("HH:mm")}–
+                      #{s.id} • {dayjs(s.start_at).format("DD MMM")} {dayjs(s.start_at).format("HH:mm")}–
                       {dayjs(s.end_at).format("HH:mm")} ({dash(s.channel)})
                     </option>
                   ))}
               </select>
-              <div className="helper">
-                Jam selesai: <b>{endDisp}</b>
-              </div>
+              <div className="helper">Jam selesai: <b>{endDisp}</b></div>
             </div>
 
             <div>
               <label className="label">Alasan</label>
               <textarea
-                className="input"
-                rows={3}
-                placeholder="Tulis alasan…"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
+                className="input" rows={3} placeholder="Tulis alasan…"
+                value={reason} onChange={(e) => setReason(e.target.value)}
               />
             </div>
 
             {msg && <div className="helper">{msg}</div>}
-            <button className="btn" disabled={submitting || !isAgent}>
-              {submitting ? "Mengirim..." : "Ajukan"}
-            </button>
+            <div className="actions-right">
+              <button className="btn" disabled={submitting || !isAgent}>
+                {submitting ? "Mengirim..." : "Ajukan"}
+              </button>
+            </div>
           </form>
         </section>
 
-        {/* Pengajuan Saya (Pending) */}
+        {/* My Pending */}
         <section className="card fluid">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Pengajuan Saya (Pending)</h3>
-            <button className="btn" style={{ width: 160 }} onClick={loadMyPending}>
-              Refresh
-            </button>
+          <div className="section-head">
+            <h3 className="section-title">Pengajuan Saya (Pending)</h3>
+            <div className="section-actions">
+              <button className="btn btn-ghost" onClick={loadMyPending}>Refresh</button>
+            </div>
           </div>
-          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+
+          <div className="list">
             {myPending.length === 0 && <div className="helper">Tidak ada pengajuan pending.</div>}
+
             {myPending.map((sw) => (
-              <div
-                key={sw.id}
-                style={{
-                  border: "1px solid #E5E7EB",
-                  borderRadius: 12,
-                  padding: 12,
-                  display: "grid",
-                  gap: 6,
-                }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div>
-                    <b>Swap #{sw.id}</b>{" "}
-                    <span className="helper">• Channel: {dash(sw.channel)}</span>
+              <div className="swap-item" key={sw.id}>
+                <div className="swap-item__top">
+                  <div className="title-row">
+                    <b>Swap #{sw.id}</b>
+                    <span className="chip">{dash(sw.channel)}</span>
                   </div>
-                  <button
-                    className="btn"
-                    style={{ width: 120, border: "1px solid #E11D48", background: "#fff", color: "#E11D48" }}
-                    onClick={() => cancelMySwap(sw)}
-                  >
-                    Batalkan
-                  </button>
+
+                  <div className="actions">
+                    <button
+                      className="btn btn-danger"
+                      onClick={() => cancelMySwap(sw)}
+                    >
+                      Batalkan
+                    </button>
+                  </div>
                 </div>
-                <div className="helper">
-                  Window: {dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}
+
+                <div className="meta">
+                  <span>Window:</span>
+                  <b>{dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}</b>
                 </div>
-                {sw.reason && <div className="helper">Alasan: {sw.reason}</div>}
+                {sw.reason && <div className="meta"><span>Alasan:</span><b>{sw.reason}</b></div>}
               </div>
             ))}
           </div>
         </section>
       </div>
 
-      {/* ====== KOLOM KANAN ====== */}
+      {/* RIGHT */}
       <div className="swap-col">
-        {/* Permintaan dari Orang Lain (Pending) */}
+        {/* Others Pending */}
         <section className="card fluid">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Permintaan Swap dari Orang Lain (Pending)</h3>
-            <button className="btn" style={{ width: 160 }} onClick={loadPendingOthers}>
-              Refresh
-            </button>
+          <div className="section-head">
+            <h3 className="section-title">Permintaan Swap dari Orang Lain (Pending)</h3>
+            <div className="section-actions">
+              <button className="btn btn-ghost" onClick={loadPendingOthers}>Refresh</button>
+            </div>
           </div>
-          <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
-            {pendingOthers.length === 0 && <div className="helper">Tidak ada permintaan.</div>}
-            {pendingOthers.map((sw) => {
-              // ==== DISPLAY NAME & CHANNEL ====
-              const displayName =
-                sw.requester_name || nameById[sw.requester_id] || `Agent #${sw.requester_id}`;
-              const displayChannel = dash(sw.channel);
 
+          <div className="list">
+            {pendingOthers.length === 0 && <div className="helper">Tidak ada permintaan.</div>}
+
+            {pendingOthers.map((sw) => {
+              const displayName = sw.requester_name || nameById[sw.requester_id] || `Agent #${sw.requester_id}`;
               return (
-                <div
-                  key={sw.id}
-                  style={{
-                    border: "1px solid #E5E7EB",
-                    borderRadius: 12,
-                    padding: 12,
-                    display: "grid",
-                    gap: 6,
-                  }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
-                    <div>
-                      <b>Swap #{sw.id}</b>{" "}
-                      <span className="helper">
-                        • Pengaju: {displayName} • Channel: {displayChannel}
-                      </span>
+                <div className="swap-item" key={sw.id}>
+                  <div className="swap-item__top">
+                    <div className="title-row">
+                      <b>Swap #{sw.id}</b>
+                      <span className="chip">{dash(sw.channel)}</span>
                     </div>
+
                     {isAgent && (
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <button className="btn" style={{ width: 120 }} onClick={() => openAcceptModal(sw)}>
-                          Accept
-                        </button>
+                      <div className="actions">
+                        <button className="btn" onClick={() => openAcceptModal(sw)}>Accept</button>
                         <button
-                          className="btn"
-                          style={{ width: 120, background: "#fff", color: "#6B7280", border: "1px solid #D1D5DB" }}
-                          onClick={() =>
-                            alert("Tidak bisa menolak permintaan orang lain. Abaikan saja jika tidak ingin menerima.")
-                          }
+                          className="btn btn-secondary"
+                          onClick={() => alert("Lewati saja bila tidak ingin menerima.")}
                         >
                           Lewati
                         </button>
                       </div>
                     )}
                   </div>
-                  <div className="helper">
-                    Window: {dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}
+
+                  <div className="meta"><span>Pengaju:</span><b>{displayName}</b></div>
+                  <div className="meta">
+                    <span>Window:</span>
+                    <b>{dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}</b>
                   </div>
-                  {sw.reason && <div className="helper">Alasan: {sw.reason}</div>}
+                  {sw.reason && <div className="meta"><span>Alasan:</span><b>{sw.reason}</b></div>}
                 </div>
               );
             })}
           </div>
         </section>
 
-        {/* Jadwal Saya */}
+        {/* My Schedules */}
         <section className="card fluid">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ margin: 0 }}>Jadwal Saya</h3>
-            <input
-              type="month"
-              className="input"
-              value={month}
-              onChange={(e) => setMonth(e.target.value)}
-              style={{ width: 160, padding: "8px 10px" }}
-            />
+          <div className="section-head">
+            <h3 className="section-title">Jadwal Saya</h3>
+            <div className="section-actions">
+              <input
+                type="month" className="input" value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                style={{ width: 170 }}
+              />
+            </div>
           </div>
-          <table style={{ width: "100%", marginTop: 12, borderCollapse: "collapse" }}>
+
+          <table className="table">
             <thead>
-              <tr style={{ textAlign: "left", fontSize: 13, color: "#6B7280" }}>
-                <th style={{ padding: "8px 6px" }}>ID</th>
-                <th style={{ padding: "8px 6px" }}>Tanggal</th>
-                <th style={{ padding: "8px 6px" }}>Jam</th>
-                <th style={{ padding: "8px 6px" }}>Channel</th>
-                <th style={{ padding: "8px 6px" }}>Shift/Catatan</th>
+              <tr>
+                <th>ID</th><th>Tanggal</th><th>Jam</th><th>Channel</th><th>Shift/Catatan</th>
               </tr>
             </thead>
             <tbody>
               {mySchedules.map((it) => (
-                <tr key={it.id} style={{ borderTop: "1px solid #F3F4F6" }}>
-                  <td style={{ padding: "8px 6px" }}>
-                    <b>{it.id}</b>
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>{dayjs(it.start_at).format("DD MMM YYYY")}</td>
-                  <td style={{ padding: "8px 6px" }}>
-                    {dayjs(it.start_at).format("HH:mm")}–{dayjs(it.end_at).format("HH:mm")}
-                  </td>
-                  <td style={{ padding: "8px 6px" }}>{dash(it.channel)}</td>
-                  <td style={{ padding: "8px 6px" }}>{it.shift_name || it.notes || "-"}</td>
+                <tr key={it.id}>
+                  <td><b>{it.id}</b></td>
+                  <td>{dayjs(it.start_at).format("DD MMM YYYY")}</td>
+                  <td>{dayjs(it.start_at).format("HH:mm")}–{dayjs(it.end_at).format("HH:mm")}</td>
+                  <td>{dash(it.channel)}</td>
+                  <td>{it.shift_name || it.notes || "-"}</td>
                 </tr>
               ))}
               {mySchedules.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="helper" style={{ padding: "8px 6px" }}>
-                    Tidak ada jadwal.
-                  </td>
-                </tr>
+                <tr><td colSpan={5} className="helper">Tidak ada jadwal.</td></tr>
               )}
             </tbody>
           </table>
         </section>
       </div>
 
-      {/* Modal Accept */}
+      {/* Modal */}
       {acceptOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,.25)",
-            display: "grid",
-            placeItems: "center",
-            zIndex: 50,
-          }}
-        >
-          <div className="card" style={{ width: 460, maxWidth: 460 }}>
+        <div className="modal-backdrop">
+          <div className="card modal">
             <h3 style={{ marginTop: 0 }}>Pilih Jadwal untuk Ditukar</h3>
             <div className="helper" style={{ marginBottom: 8 }}>
-              Swap #{acceptTarget?.id} • window:{" "}
+              Swap #{acceptTarget?.id} • Window:{" "}
               {dayjs(acceptTarget?.start_at).format("DD MMM YYYY HH:mm")} –{" "}
               {dayjs(acceptTarget?.end_at).format("HH:mm")}
             </div>
@@ -401,24 +344,15 @@ export default function AgentSwap() {
                 .sort((a, b) => new Date(a.start_at) - new Date(b.start_at))
                 .map((s) => (
                   <option key={s.id} value={s.id}>
-                    #{s.id} • {dayjs(s.start_at).format("DD MMM")}{" "}
-                    {dayjs(s.start_at).format("HH:mm")}–
+                    #{s.id} • {dayjs(s.start_at).format("DD MMM")} {dayjs(s.start_at).format("HH:mm")}–
                     {dayjs(s.end_at).format("HH:mm")} ({dash(s.channel)})
                   </option>
                 ))}
             </select>
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-              <button className="btn" style={{ width: 120 }} disabled={!selectedMySchForAccept} onClick={doAccept}>
-                Kirim
-              </button>
-              <button
-                className="btn"
-                style={{ width: 120, background: "linear-gradient(135deg,#9CA3AF,#6B7280)" }}
-                onClick={() => setAcceptOpen(false)}
-              >
-                Batal
-              </button>
+            <div className="actions-right" style={{ marginTop: 12 }}>
+              <button className="btn" disabled={!selectedMySchForAccept} onClick={doAccept}>Kirim</button>
+              <button className="btn btn-secondary" onClick={() => setAcceptOpen(false)}>Batal</button>
             </div>
           </div>
         </div>
