@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"bjb-backoffice/internal/service"
@@ -15,7 +16,7 @@ import (
 type SwapHandler struct {
 	svc     *service.SwapService
 	sched   *service.ScheduleService
-	userSvc *service.UserService // ← NEW
+	userSvc *service.UserService
 }
 
 func NewSwapHandler(s *service.SwapService, sched *service.ScheduleService, users *service.UserService) *SwapHandler {
@@ -23,8 +24,9 @@ func NewSwapHandler(s *service.SwapService, sched *service.ScheduleService, user
 }
 
 type createSwapReq struct {
-	StartAt string `json:"start_at" binding:"required"` // RFC3339
-	Reason  string `json:"reason"`
+	StartAt      string `json:"start_at" binding:"required"` // RFC3339
+	Reason       string `json:"reason"`
+	TargetUserID *uint  `json:"target_user_id"`
 }
 
 func (h *SwapHandler) Create(c *gin.Context) {
@@ -40,18 +42,23 @@ func (h *SwapHandler) Create(c *gin.Context) {
 		return
 	}
 
-	m, e := h.svc.CreateFromRFC3339(requester, req.StartAt, req.Reason)
+	m, e := h.svc.CreateFromRFC3339(requester, req.StartAt, req.Reason, req.TargetUserID)
 	if e != nil {
-		log.Printf("[swap-create] failed uid=%d start_at=%s reason=%q err=%v", requester, req.StartAt, req.Reason, e)
+		log.Printf("[swap-create] failed uid=%d start_at=%s reason=%q target=%v err=%v",
+			requester, req.StartAt, req.Reason, req.TargetUserID, e)
 		c.JSON(http.StatusBadRequest, gin.H{"error": e.Error()})
 		return
 	}
 
-	log.Printf("[swap-create] ok swapID=%d uid=%d start=%s end=%s",
-		m.ID, requester, m.StartAt.Format(time.RFC3339), m.EndAt.Format(time.RFC3339))
+	log.Printf("[swap-create] ok swapID=%d uid=%d start=%s end=%s target=%v",
+		m.ID, requester, m.StartAt.Format(time.RFC3339), m.EndAt.Format(time.RFC3339), req.TargetUserID)
 
 	c.JSON(http.StatusCreated, gin.H{
-		"id": m.ID, "status": m.Status, "start_at": m.StartAt, "end_at": m.EndAt,
+		"id":             m.ID,
+		"status":         m.Status,
+		"start_at":       m.StartAt,
+		"end_at":         m.EndAt,
+		"target_user_id": m.TargetUserID,
 	})
 }
 
@@ -88,25 +95,6 @@ func (h *SwapHandler) Accept(c *gin.Context) {
 
 // --- helpers ---
 
-// cari channel utk user di window tertentu; urutan: overlap → exact → same-day
-func (h *SwapHandler) resolveChannelForUser(userID uint, start, end time.Time) (string, error) {
-	// 1) overlap (robust)
-	if sch, err := h.sched.FindByUserAndOverlap(userID, start, end); err == nil && sch != nil {
-		return string(sch.Channel), nil
-	}
-	// 2) exact
-	if sch2, err2 := h.sched.FindByUserAndWindow(userID, start, end); err2 == nil && sch2 != nil {
-		return string(sch2.Channel), nil
-	}
-	// 3) same-day
-	dayStart := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
-	dayEnd := dayStart.Add(24 * time.Hour)
-	if sch3, err3 := h.sched.FindByUserAndSameDay(userID, dayStart, dayEnd); err3 == nil && sch3 != nil {
-		return string(sch3.Channel), nil
-	}
-	return "", nfErr{}
-}
-
 type nfErr struct{}
 
 func (nfErr) Error() string { return "not found" }
@@ -131,7 +119,24 @@ func (h *SwapHandler) List(c *gin.Context) {
 		return
 	}
 
-	// cache nama biar gak bolak-balik DB
+	// siapa yang request & apa rolenya
+	val, _ := c.Get("claims")
+	claims := val.(jwt.MapClaims)
+	idf, _ := claims["sub"].(float64)
+	me := uint(idf)
+
+	rolesRaw, _ := claims["roles"].([]interface{})
+	isBackoffice := false
+	for _, r := range rolesRaw {
+		s, _ := r.(string)
+		s = strings.ToUpper(strings.TrimSpace(s))
+		if s == "BACKOFFICE" || s == "ADMIN" {
+			isBackoffice = true
+			break
+		}
+	}
+
+	// cache nama
 	nameCache := map[uint]string{}
 	getName := func(uid uint) string {
 		if uid == 0 {
@@ -151,49 +156,51 @@ func (h *SwapHandler) List(c *gin.Context) {
 
 	out := make([]gin.H, 0, len(swaps))
 	for _, s := range swaps {
-		var ch string
-
-		if s.RequesterID != 0 && !s.StartAt.IsZero() && !s.EndAt.IsZero() {
-			// coba via requester (PENDING)
-			if v, e := h.resolveChannelForUser(s.RequesterID, s.StartAt, s.EndAt); e == nil && v != "" {
-				ch = v
-			} else if s.CounterpartyID != nil && *s.CounterpartyID != 0 {
-				// fallback via counterparty (APPROVED)
-				if v2, e2 := h.resolveChannelForUser(*s.CounterpartyID, s.StartAt, s.EndAt); e2 == nil && v2 != "" {
-					ch = v2
-					log.Printf("[swap-list] channel resolved via counterparty swapID=%d cp_uid=%d win=%s~%s ch=%s",
-						s.ID, *s.CounterpartyID, s.StartAt.Format(time.RFC3339), s.EndAt.Format(time.RFC3339), ch)
-				} else {
-					log.Printf("[swap-list] channel not found for req & cp swapID=%d req_uid=%d cp_uid=%v win=%s~%s",
-						s.ID, s.RequesterID, s.CounterpartyID, s.StartAt.Format(time.RFC3339), s.EndAt.Format(time.RFC3339))
+		// ==== VISIBILITY FILTER untuk AGENT ====
+		if !isBackoffice {
+			// agent biasa hanya boleh lihat:
+			// - swap yang ia ajukan
+			// - swap yang diarahkan langsung kepadanya
+			// - swap tanpa target (broadcast)
+			if s.RequesterID != me {
+				if s.TargetUserID != nil && *s.TargetUserID != 0 && *s.TargetUserID != me {
+					// skip: ini direct ke orang lain
+					continue
 				}
-			} else {
-				log.Printf("[swap-list] channel not found for requester (no counterparty yet) swapID=%d req_uid=%d win=%s~%s",
-					s.ID, s.RequesterID, s.StartAt.Format(time.RFC3339), s.EndAt.Format(time.RFC3339))
 			}
-		} else {
-			log.Printf("[swap-list] invalid requester/window swapID=%d uid=%d start=%v end=%v",
-				s.ID, s.RequesterID, s.StartAt, s.EndAt)
+		}
+
+		// resolve channel (opsional, untuk tampilan)
+		var ch string
+		if s.RequesterID != 0 && !s.StartAt.IsZero() && !s.EndAt.IsZero() {
+			if v, e := h.sched.FindByUserAndOverlap(s.RequesterID, s.StartAt, s.EndAt); e == nil && v != nil {
+				ch = string(v.Channel)
+			} else if s.CounterpartyID != nil && *s.CounterpartyID != 0 {
+				if v2, e2 := h.sched.FindByUserAndOverlap(*s.CounterpartyID, s.StartAt, s.EndAt); e2 == nil && v2 != nil {
+					ch = string(v2.Channel)
+				}
+			}
 		}
 
 		out = append(out, gin.H{
 			"id":              s.ID,
 			"requester_id":    s.RequesterID,
-			"requester_name":  getName(s.RequesterID), // ← NEW
+			"requester_name":  getName(s.RequesterID),
 			"counterparty_id": s.CounterpartyID,
-			"counterparty_name": func() string { // ← NEW
-				if s.CounterpartyID == nil || *s.CounterpartyID == 0 {
+			"counterparty_name": func() string {
+				if s.CounterpartyID == nil {
 					return ""
 				}
 				return getName(*s.CounterpartyID)
 			}(),
-			"start_at":   s.StartAt,
-			"end_at":     s.EndAt,
-			"reason":     s.Reason,
-			"status":     s.Status,
-			"channel":    ch,
-			"created_at": s.CreatedAt,
-			"updated_at": s.UpdatedAt,
+			"target_user_id": s.TargetUserID, // ← penting utk FE guard
+			"start_at":       s.StartAt,
+			"end_at":         s.EndAt,
+			"reason":         s.Reason,
+			"status":         s.Status,
+			"channel":        ch,
+			"created_at":     s.CreatedAt,
+			"updated_at":     s.UpdatedAt,
 		})
 	}
 

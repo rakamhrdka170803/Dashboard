@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"bjb-backoffice/internal/domain"
@@ -38,8 +39,56 @@ func (s *SwapService) getName(uid uint) string {
 	return u.FullName
 }
 
+// helper: list semua user id (via paginasi repo.List)
+func (s *SwapService) listAllUserIDs() ([]uint, error) {
+	out := []uint{}
+	if s.users == nil {
+		return out, nil
+	}
+	const pageSize = 1000
+	page := 1
+	for {
+		users, total, err := s.users.List(page, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			out = append(out, u.ID)
+		}
+		if int64(page*pageSize) >= total || len(users) == 0 {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
+
+// helper: ambil semua user id yang ber-ROLE Backoffice/Admin
+func (s *SwapService) getBackofficeIDs() []uint {
+	out := []uint{}
+	if s.users == nil {
+		return out
+	}
+	users, _, err := s.users.List(1, 2000)
+	if err != nil {
+		return out
+	}
+	for _, u := range users {
+		for _, r := range u.Roles {
+			// r.Name bertipe domain.RoleName -> cast ke string
+			name := strings.ToUpper(strings.TrimSpace(string(r.Name)))
+			if name == "BACKOFFICE" || name == "ADMIN" {
+				out = append(out, u.ID)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // Buat swap dari RFC3339 start_at (end_at default +8 jam)
-func (s *SwapService) CreateFromRFC3339(requester uint, startRFC3339 string, reason string) (*domain.SwapRequest, error) {
+// targetUserID optional: jika diisi, maka notif HANYA ke requester, target, dan Backoffice
+func (s *SwapService) CreateFromRFC3339(requester uint, startRFC3339 string, reason string, targetUserID *uint) (*domain.SwapRequest, error) {
 	if requester == 0 {
 		return nil, errors.New("invalid requester")
 	}
@@ -57,52 +106,74 @@ func (s *SwapService) CreateFromRFC3339(requester uint, startRFC3339 string, rea
 	}
 
 	m := &domain.SwapRequest{
-		RequesterID: requester,
-		StartAt:     start,
-		EndAt:       end,
-		Reason:      reason,
-		Status:      domain.SwapPending,
+		RequesterID:  requester,
+		StartAt:      start,
+		EndAt:        end,
+		Reason:       reason,
+		Status:       domain.SwapPending,
+		TargetUserID: targetUserID, // NEW
 	}
 	if err := s.repo.Create(m); err != nil {
 		return nil, err
 	}
-	log.Printf("[swap-create] ok swapID=%d uid=%d start=%s end=%s",
-		m.ID, requester, m.StartAt.Format(time.RFC3339), m.EndAt.Format(time.RFC3339))
+	log.Printf("[swap-create] ok swapID=%d uid=%d start=%s end=%s target=%v",
+		m.ID, requester, m.StartAt.Format(time.RFC3339), m.EndAt.Format(time.RFC3339), targetUserID)
 
-	// === NOTIF: BROADCAST ke semua user (Permintaan Tukar Dinas/Libur) ===
 	if s.notif == nil {
-		log.Printf("[swap-create] WARN notif service is nil; skip notif swapID=%d", m.ID)
+		log.Printf("[swap-create] WARN notif service is nil; skip all notif swapID=%d", m.ID)
 		return m, nil
 	}
+
 	refID := m.ID
 	reqName := s.getName(requester)
-	title := "Permintaan Tukar Dinas/Libur"
 
-	// format body yang netral (tanpa bergantung channel/jadwal orang lain)
-	body := fmt.Sprintf(
-		"Nama: %s\nTanggal: %s\nJam: %s–%s",
+	// Notif ke requester (history di panel)
+	bodySelf := fmt.Sprintf("%s mengajukan tukar %s–%s (±8 jam)",
 		reqName,
-		start.Format("02 Jan 2006"),
-		start.Format("15:04"),
-		end.Format("15:04"),
+		start.Format("02 Jan 06 15:04"),
+		end.Format("02 Jan 06 15:04"),
 	)
-	if reason != "" {
-		body += fmt.Sprintf("\nAlasan: %s", reason)
-	}
+	_ = s.notif.Notify(requester, "Permintaan Tukar Dinas/Libur", bodySelf, "SWAP", &refID)
 
-	ids, err := s.users.ListAllIDs()
-	if err != nil {
-		log.Printf("[swap-create] WARN list all user ids err=%v; fallback notify requester only", err)
-		_ = s.notif.Notify(requester, title, body, "SWAP", &refID)
+	// === MODE DIRECT: target + backoffice ===
+	if targetUserID != nil && *targetUserID != 0 {
+		target := *targetUserID
+
+		// target agent
+		if err := s.notif.Notify(target, "Permintaan Tukar Dinas/Libur", bodySelf, "SWAP", &refID); err != nil {
+			log.Printf("[swap-create] ERROR notify target uid=%d swapID=%d err=%v", target, m.ID, err)
+		}
+
+		// backoffice
+		for _, bid := range s.getBackofficeIDs() {
+			if bid == requester || bid == target {
+				continue
+			}
+			_ = s.notif.Notify(bid, "Permintaan Tukar Dinas/Libur", bodySelf, "SWAP", &refID)
+		}
 		return m, nil
 	}
-	for _, uid := range ids {
-		if err := s.notif.Notify(uid, title, body, "SWAP", &refID); err != nil {
-			log.Printf("[swap-create] ERROR broadcast PENDING swapID=%d to uid=%d err=%v", m.ID, uid, err)
-		}
-	}
-	log.Printf("[swap-create] broadcast PENDING OK swapID=%d to %d users", m.ID, len(ids))
 
+	// === MODE BROADCAST (perilaku lama) ===
+	// Resolve channel requester di window ini
+	ch, err := s.sched.ResolveChannelForUser(requester, start, end)
+	if err != nil || ch == "" {
+		log.Printf("[swap-create] INFO no channel resolved for requester uid=%d at %s~%s; skip broadcast candidates", requester, start, end)
+		return m, nil
+	}
+	// Ambil kandidat user yang overlap & same channel (exclude requester)
+	candIDs, err := s.sched.ListUserIDsOverlapSameChannel(start, end, ch, requester)
+	if err != nil {
+		log.Printf("[swap-create] WARN list candidates err=%v", err)
+		return m, nil
+	}
+	if len(candIDs) == 0 {
+		log.Printf("[swap-create] INFO no candidates for channel=%s in %s~%s", ch, start, end)
+		return m, nil
+	}
+	for _, uid := range candIDs {
+		_ = s.notif.Notify(uid, "Permintaan Tukar Dinas/Libur", bodySelf, "SWAP", &refID)
+	}
 	return m, nil
 }
 
@@ -165,7 +236,7 @@ func (s *SwapService) Accept(id uint, me uint, counterpartyScheduleID uint) (*do
 	}
 	log.Printf("[swap-accept] ok swapID=%d by uid=%d status=%s", sw.ID, me, sw.Status)
 
-	// === NOTIF: BROADCAST ke semua user (Swap Disetujui) ===
+	// === NOTIF saat APPROVED ===
 	if s.notif == nil {
 		log.Printf("[swap-accept] WARN notif service is nil; skip notif APPROVED swapID=%d", sw.ID)
 		return sw, nil
@@ -174,26 +245,20 @@ func (s *SwapService) Accept(id uint, me uint, counterpartyScheduleID uint) (*do
 	reqName := s.getName(params.reqUID)
 	cpName := s.getName(params.cpUID)
 	title := "Swap Disetujui"
+	body := fmt.Sprintf("Swap #%d telah disetujui & jadwal diupdate (Requester %s • Penerima %s)", sw.ID, reqName, cpName)
 
-	body := fmt.Sprintf(
-		"Swap #%d telah disetujui & jadwal diupdate (Requester %s • Penerima %s)",
-		sw.ID, reqName, cpName,
-	)
-
-	ids, err := s.users.ListAllIDs()
-	if err != nil {
-		log.Printf("[swap-accept] WARN list all user ids err=%v; fallback notify requester & counterparty", err)
+	// Broadcast ke seluruh user (sesuai requirement kamu sebelumnya)
+	allIDs, err := s.listAllUserIDs()
+	if err != nil || len(allIDs) == 0 {
+		// fallback minimal ke dua pihak
 		_ = s.notif.Notify(params.reqUID, title, body, "SWAP", &refID)
 		_ = s.notif.Notify(params.cpUID, title, body, "SWAP", &refID)
 		return sw, nil
 	}
-	for _, uid := range ids {
-		if err := s.notif.Notify(uid, title, body, "SWAP", &refID); err != nil {
-			log.Printf("[swap-accept] ERROR broadcast APPROVED swapID=%d to uid=%d err=%v", sw.ID, uid, err)
-		}
+	for _, uid := range allIDs {
+		_ = s.notif.Notify(uid, title, body, "SWAP", &refID)
 	}
-	log.Printf("[swap-accept] broadcast APPROVED OK swapID=%d to %d users", sw.ID, len(ids))
-
+	log.Printf("[swap-accept] broadcast APPROVED OK swapID=%d to %d users", sw.ID, len(allIDs))
 	return sw, nil
 }
 
@@ -215,7 +280,6 @@ func (s *SwapService) Cancel(id uint, requester uint) (*domain.SwapRequest, erro
 	}
 	log.Printf("[swap-cancel] ok swapID=%d by uid=%d status=%s", sw.ID, requester, sw.Status)
 
-	// Notif pembatalan -> tetap ke requester saja (kalau mau broadcast, tinggal pluck semua ID dan kirim)
 	if s.notif == nil {
 		log.Printf("[swap-cancel] WARN notif service is nil; skip notif CANCEL swapID=%d", sw.ID)
 		return sw, nil
@@ -228,10 +292,7 @@ func (s *SwapService) Cancel(id uint, requester uint) (*domain.SwapRequest, erro
 	)
 	if err := s.notif.Notify(requester, "Swap Dibatalkan", body, "SWAP", &refID); err != nil {
 		log.Printf("[swap-cancel] ERROR notify swapID=%d uid=%d err=%v", sw.ID, requester, err)
-	} else {
-		log.Printf("[swap-cancel] notif CANCEL OK swapID=%d uid=%d", sw.ID, requester)
 	}
-
 	return sw, nil
 }
 

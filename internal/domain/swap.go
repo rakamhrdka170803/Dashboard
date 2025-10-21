@@ -2,7 +2,6 @@ package domain
 
 import "time"
 
-// status: pending menunggu agent lain approve; approved/cancelled
 type SwapStatus string
 
 const (
@@ -12,14 +11,22 @@ const (
 )
 
 type SwapRequest struct {
-	ID             uint       `gorm:"primaryKey"`
-	RequesterID    uint       `gorm:"index;not null"` // agent yang minta tukar
-	StartAt        time.Time  `gorm:"not null"`
-	EndAt          time.Time  `gorm:"not null"` // default StartAt + 8h
-	Reason         string     `gorm:"type:text"`
-	Status         SwapStatus `gorm:"type:VARCHAR(12);index;default:'PENDING'"`
-	CounterpartyID *uint
-	ApprovedAt     *time.Time
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID          uint       `gorm:"primaryKey"`
+	RequesterID uint       `gorm:"not null"`
+	StartAt     time.Time  `gorm:"not null"`
+	EndAt       time.Time  `gorm:"not null"`
+	Reason      string     `gorm:"size:255"`
+	Status      SwapStatus `gorm:"type:VARCHAR(20);not null"`
+
+	CounterpartyID         *uint
+	ApprovedAt             *time.Time
+	Channel                string `gorm:"type:VARCHAR(16);default:''"`
+	RequesterScheduleID    *uint
+	CounterpartyScheduleID *uint
+
+	// ⬇⬇⬇ WAJIB ada agar GORM map ke kolom target_user_id
+	TargetUserID *uint `gorm:"column:target_user_id"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

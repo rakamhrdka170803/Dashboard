@@ -15,6 +15,7 @@ type UserRepository interface {
 	Update(u *domain.User) error                       // 👈 tetap
 	UpdateFields(id uint, fields map[string]any) error // 👈 tetap
 	Delete(id uint) error
+	ListBackofficeIDs() ([]uint, error)
 
 	// 👇 NEW: dipakai untuk broadcast notif ke semua user
 	ListAllIDs() ([]uint, error)
@@ -78,4 +79,24 @@ func (r *userRepository) ListAllIDs() ([]uint, error) {
 		return nil, err
 	}
 	return ids, nil
+}
+
+func (r *userRepository) ListBackofficeIDs() ([]uint, error) {
+	type row struct{ ID uint }
+	var rows []row
+	// ambil user yg punya role BACKOFFICE
+	err := r.db.Table("users").
+		Select("users.id").
+		Joins("JOIN user_roles ur ON ur.user_id = users.id").
+		Joins("JOIN roles r ON r.id = ur.role_id").
+		Where("r.name = ?", "BACKOFFICE").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint, 0, len(rows))
+	for _, v := range rows {
+		out = append(out, v.ID)
+	}
+	return out, nil
 }
