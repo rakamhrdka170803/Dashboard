@@ -1,4 +1,4 @@
-import { Outlet, NavLink } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 import Sidebar from "../components/Sidebar";
 import Topbar from "../components/Topbar";
 import useNotifications from "../hooks/useNotifications";
@@ -10,8 +10,9 @@ export default function AgentLayout() {
     { label:"Home", to:"/agent", end:true },
     { label:"Jadwal", to:"/agent/schedule" },
     { label:"Jadwal (Semua)", to:"/agent/schedules-all" },
-    { label:"Pengajuan Tukar", to:"/agent/swap", badge:"unread" }, 
-    { label:"Tukar Libur", to:"/agent/holiday" },  // badge untuk notif
+    { label:"Pengajuan Tukar", to:"/agent/swap", badge:"unread" },
+    { label:"Tukar Libur", to:"/agent/holiday" },
+    { label:"Ajukan Cuti", to:"/agent/leave" }, // NEW
   ];
 
   return (

@@ -78,6 +78,7 @@ func Setup(
 	))
 	findingsGroup.POST("", findingH.Create)
 	findingsGroup.DELETE("/:id", findingH.Delete)
+	secured.GET("/findings/count-mine", findingH.CountMine) // NEW
 	secured.GET("/findings", findingH.List)
 
 	// Lateness
@@ -94,8 +95,16 @@ func Setup(
 
 	// Leave
 	secured.POST("/leave-requests", leaveH.Create)
+	secured.GET("/leave-requests", leaveH.List) // NEW: list untuk BO/Agent (handler filter)
+	secured.DELETE("/leave-requests/:id", leaveH.Cancel)
 	leaveAdmin := secured.Group("/leave-requests")
-	leaveAdmin.Use(middleware.RequireRoles(string(domain.RoleHRAdmin), string(domain.RoleSuperAdmin)))
+	leaveAdmin.Use(middleware.RequireRoles(
+		string(domain.RoleHRAdmin),
+		string(domain.RoleSuperAdmin),
+		string(domain.RoleSPV),
+		string(domain.RoleTL),
+		string(domain.RoleQC),
+	))
 	leaveAdmin.PATCH("/:id/approve", leaveH.Approve)
 	leaveAdmin.PATCH("/:id/reject", leaveH.Reject)
 

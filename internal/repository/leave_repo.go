@@ -12,6 +12,7 @@ type LeaveRepository interface {
 	Update(l *domain.LeaveRequest) error
 	FindByID(id uint) (*domain.LeaveRequest, error)
 	List(requesterID *uint, status *domain.LeaveStatus, from, to *time.Time, page, size int) ([]domain.LeaveRequest, int64, error)
+	Delete(id uint) error
 }
 
 type leaveRepository struct{ db *gorm.DB }
@@ -46,4 +47,8 @@ func (r *leaveRepository) List(requesterID *uint, status *domain.LeaveStatus, fr
 	var out []domain.LeaveRequest
 	err := q.Order("created_at DESC").Limit(size).Offset((page - 1) * size).Find(&out).Error
 	return out, total, err
+}
+
+func (r *leaveRepository) Delete(id uint) error {
+	return r.db.Delete(&domain.LeaveRequest{}, id).Error
 }

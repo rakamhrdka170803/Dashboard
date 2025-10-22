@@ -163,3 +163,23 @@ func (h *FindingHandler) List(c *gin.Context) {
 		"page": page, "size": size, "total": total, "items": out,
 	})
 }
+
+func (h *FindingHandler) CountMine(c *gin.Context) {
+	val, _ := c.Get("claims")
+	claims := val.(jwt.MapClaims)
+	idf, _ := claims["sub"].(float64)
+	self := uint(idf)
+
+	monthStr := c.DefaultQuery("month", time.Now().Format("2006-01"))
+	t, err := time.Parse("2006-01", monthStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad month"})
+		return
+	}
+	n, err := h.svc.CountForAgentInMonth(self, t)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"agent_id": self, "month": monthStr, "count": n})
+}

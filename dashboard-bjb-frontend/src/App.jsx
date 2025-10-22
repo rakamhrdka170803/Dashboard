@@ -9,11 +9,14 @@ import AgentHome from "./pages/agent/Home";
 import AgentSchedule from "./pages/agent/Schedule";
 import AgentSwap from "./pages/agent/Swap";
 import AgentHolidaySwap from "./pages/agent/HolidaySwap";
+import AgentLeave from "./pages/agent/Leave";                // NEW
 import BackofficeHolidaySwap from "./pages/backoffice/HolidaySwap";
+import BackofficeLeaves from "./pages/backoffice/Leaves";    // NEW
+import BackofficeFindings from "./pages/backoffice/Findings";
 
 import BackofficeHome from "./pages/backoffice/Home";
-import BackofficeSchedules from "./pages/backoffice/Schedules"; // kalender pribadi (per agent)
-import ScheduleMatrix from "./pages/ScheduleMatrix";           // matrix semua orang
+import BackofficeSchedules from "./pages/backoffice/Schedules";
+import ScheduleMatrix from "./pages/ScheduleMatrix";
 import Landing from "./pages/Landing";
 
 const BACKOFFICE_ROLES = ["SUPER_ADMIN","SPV","QC","TL","HR_ADMIN"];
@@ -30,9 +33,11 @@ export default function App(){
         <Route element={<BackofficeLayout/>}>
           <Route index element={<BackofficeHome/>} />
           <Route path="/backoffice" element={<BackofficeHome/>} />
-          <Route path="/backoffice/schedule" element={<BackofficeSchedules/>} />  {/* kalender pribadi */}
-          <Route path="/backoffice/schedules" element={<ScheduleMatrix/>} />      {/* matrix semua */}
-           <Route path="/backoffice/holiday-swaps" element={<BackofficeHolidaySwap/>} />
+          <Route path="/backoffice/schedule" element={<BackofficeSchedules/>} />
+          <Route path="/backoffice/schedules" element={<ScheduleMatrix/>} />
+          <Route path="/backoffice/holiday-swaps" element={<BackofficeHolidaySwap/>} />
+          <Route path="/backoffice/leaves" element={<BackofficeLeaves/>} /> {/* NEW */}
+          <Route path="/backoffice/findings" element={<BackofficeFindings/>} />
         </Route>
       </Route>
 
@@ -44,6 +49,7 @@ export default function App(){
           <Route path="/agent/schedule" element={<AgentSchedule/>} />
           <Route path="/agent/swap" element={<AgentSwap/>} />
           <Route path="/agent/holiday" element={<AgentHolidaySwap/>} />
+          <Route path="/agent/leave" element={<AgentLeave/>} />          {/* NEW */}
           <Route path="/agent/schedules-all" element={<ScheduleMatrix/>} />
         </Route>
       </Route>

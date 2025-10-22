@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"os"
 	"time"
 
 	"bjb-backoffice/internal/config"
@@ -11,7 +10,6 @@ import (
 	httpHandler "bjb-backoffice/internal/http/handler"
 	httpRouter "bjb-backoffice/internal/http/router"
 	"bjb-backoffice/internal/repository"
-	"bjb-backoffice/internal/seed"
 	"bjb-backoffice/internal/service"
 
 	"github.com/gin-contrib/cors"
@@ -23,10 +21,17 @@ func main() {
 	_ = godotenv.Load()
 	cfg := config.Load()
 	db := database.Connect(cfg.DBDSN)
-	if err := db.AutoMigrate(&domain.HolidaySwap{}); err != nil {
-		log.Fatal("auto-migrate holiday_swaps failed: ", err)
+
+	// AutoMigrate
+	if err := db.AutoMigrate(
+		&domain.HolidaySwap{},
+		&domain.LeaveRequest{}, // NEW
+		&domain.Finding{},      // kalau belum dimigrate
+	); err != nil {
+		log.Fatal("auto-migrate failed: ", err)
 	}
 
+	// repos
 	roleRepo := repository.NewRoleRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	findingRepo := repository.NewFindingRepository(db)
@@ -35,27 +40,20 @@ func main() {
 	leaveRepo := repository.NewLeaveRepository(db)
 	swapRepo := repository.NewSwapRepository(db)
 	notifRepo := repository.NewNotificationRepository(db)
+	holidayRepo := repository.NewHolidaySwapRepository(db)
 
+	// services
 	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTExpiryH)
 	userSvc := service.NewUserService(userRepo, roleRepo, authSvc)
 	findingSvc := service.NewFindingService(findingRepo, userRepo)
 	notifSvc := service.NewNotificationService(notifRepo)
 	lateSvc := service.NewLatenessService(lateRepo, userRepo)
 	schedSvc := service.NewScheduleService(schedRepo)
-	leaveSvc := service.NewLeaveService(leaveRepo, userRepo, notifSvc, findingSvc)
+	leaveSvc := service.NewLeaveService(leaveRepo, userRepo, notifSvc, findingSvc, schedSvc) // pass schedSvc
 	swapSvc := service.NewSwapService(swapRepo, schedSvc, notifSvc, userRepo)
-	holidayRepo := repository.NewHolidaySwapRepository(db)
 	holidaySvc := service.NewHolidaySwapService(holidayRepo, schedSvc, notifSvc, userRepo)
-	holidayH := httpHandler.NewHolidaySwapHandler(holidaySvc)
 
-	// seed roles + super admin
-	seed.Bootstrap(
-		roleRepo, userRepo, userSvc,
-		os.Getenv("SEED_SUPERADMIN_EMAIL"),
-		os.Getenv("SEED_SUPERADMIN_PASSWORD"),
-	)
-
-	// Handlers
+	// handlers
 	authH := httpHandler.NewAuthHandler(authSvc)
 	userH := httpHandler.NewUserHandler(userSvc)
 	findingH := httpHandler.NewFindingHandler(findingSvc)
@@ -64,6 +62,7 @@ func main() {
 	leaveH := httpHandler.NewLeaveHandler(leaveSvc)
 	swapH := httpHandler.NewSwapHandler(swapSvc, schedSvc, userSvc)
 	notifH := httpHandler.NewNotificationHandler(notifSvc)
+	holidayH := httpHandler.NewHolidaySwapHandler(holidaySvc)
 
 	// Gin & CORS
 	r := gin.Default()
@@ -76,7 +75,10 @@ func main() {
 		MaxAge:           12 * time.Hour,
 	}))
 
-	// Router setup
+	// STATIC for uploads
+	r.Static("/uploads", "./uploads")
+
+	// Router
 	httpRouter.Setup(
 		r,
 		authH, userH, findingH, lateH, schedH, leaveH, swapH, notifH, holidayH,
