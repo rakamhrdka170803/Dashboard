@@ -225,3 +225,46 @@ func (h *ScheduleHandler) ListMonthlyAll(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"month": monthStr, "items": out})
 }
+
+func (h *ScheduleHandler) OffDays(c *gin.Context) {
+	uidStr := c.Param("id")
+	uid64, err := strconv.ParseUint(uidStr, 10, 64)
+	if err != nil || uid64 == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+	monthStr := c.DefaultQuery("month", time.Now().Format("2006-01"))
+	t, err := time.Parse("2006-01", monthStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid month"})
+		return
+	}
+
+	// Ambil semua jadwal user tsb di bulan itu
+	u := uint(uid64)
+	items, err := h.svc.ListMonthly(&u, t)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// tandai hari yang busy
+	startMonth := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.Local)
+	days := time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, time.Local).Day()
+	busy := map[string]bool{}
+	for _, it := range items {
+		d := time.Date(it.StartAt.Year(), it.StartAt.Month(), it.StartAt.Day(), 0, 0, 0, 0, time.Local)
+		key := d.Format("2006-01-02")
+		busy[key] = true
+	}
+	// susun off list (hari yang tidak busy)
+	off := []string{}
+	for i := 0; i < days; i++ {
+		d := startMonth.AddDate(0, 0, i)
+		key := d.Format("2006-01-02")
+		if !busy[key] {
+			off = append(off, key)
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"user_id": u, "month": monthStr, "off_dates": off})
+}

@@ -10,7 +10,8 @@ export default function BackofficeLayout() {
   const items = [
     { label:"Home", to:"/backoffice", end:true, badge:"unread" },
     { label:"Kalender Pribadi", to:"/backoffice/schedule" }, // per-agent (lama)
-    { label:"Jadwal (Semua)", to:"/backoffice/schedules" },  // matrix (baru)
+    { label:"Jadwal (Semua)", to:"/backoffice/schedules" }, 
+    { label:"Tukar Libur", to:"/backoffice/holiday-swaps" }, // matrix (baru)
   ];
 
   return (

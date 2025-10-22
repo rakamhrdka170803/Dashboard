@@ -10,7 +10,8 @@ export default function AgentLayout() {
     { label:"Home", to:"/agent", end:true },
     { label:"Jadwal", to:"/agent/schedule" },
     { label:"Jadwal (Semua)", to:"/agent/schedules-all" },
-    { label:"Pengajuan Tukar", to:"/agent/swap", badge:"unread" }, // badge untuk notif
+    { label:"Pengajuan Tukar", to:"/agent/swap", badge:"unread" }, 
+    { label:"Tukar Libur", to:"/agent/holiday" },  // badge untuk notif
   ];
 
   return (

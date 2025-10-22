@@ -19,6 +19,7 @@ func Setup(
 	leaveH *handler.LeaveHandler,
 	swapH *handler.SwapHandler,
 	notifH *handler.NotificationHandler,
+	holidayH *handler.HolidaySwapHandler,
 	jwtSecret []byte,
 ) {
 	r.SetTrustedProxies(nil)
@@ -61,6 +62,7 @@ func Setup(
 	// GET (lihat jadwal) – semua login; agent dibatasi di handler
 	secured.GET("/schedules/monthly", schedH.ListMonthly)
 	secured.GET("/schedules/monthly-all", schedH.ListMonthlyAll)
+	secured.GET("/users/:id/off-days", schedH.OffDays)
 
 	// Create/Update/Delete – role tertentu saja
 	schedAdmin := secured.Group("/schedules")
@@ -108,4 +110,29 @@ func Setup(
 	// Notifications
 	secured.GET("/notifications", notifH.ListMine)
 	secured.PATCH("/notifications/:id/read", notifH.MarkRead)
+
+	// === Holiday Swaps ===
+	// Create & List – semua user login (visibility di handler)
+	secured.POST("/holiday-swaps", holidayH.Create)
+	secured.GET("/holiday-swaps", holidayH.List)
+	// Agent (target) accept/reject
+	holidayAgent := secured.Group("/holiday-swaps")
+	holidayAgent.Use(middleware.RequireRoles(string(domain.RoleAgent)))
+	holidayAgent.POST("/:id/accept", holidayH.TargetAccept)
+	holidayAgent.POST("/:id/reject", holidayH.TargetReject)
+
+	// Backoffice approve (buat jadwal)
+	holidayAdmin := secured.Group("/holiday-swaps")
+	holidayAdmin.Use(middleware.RequireRoles(
+		string(domain.RoleHRAdmin),
+		string(domain.RoleTL),
+		string(domain.RoleSuperAdmin),
+		string(domain.RoleSPV), // ⬅️ NEW
+		string(domain.RoleQC),  // ⬅️ NEW
+	))
+	holidayAdmin.POST("/:id/bo-approve", holidayH.BOApprove)
+
+	// Cancel oleh pengaju (agent)
+	holidayAgent.POST("/:id/cancel", holidayH.Cancel)
+
 }

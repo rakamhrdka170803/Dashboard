@@ -8,6 +8,8 @@ import BackofficeLayout from "./layouts/BackofficeLayout";
 import AgentHome from "./pages/agent/Home";
 import AgentSchedule from "./pages/agent/Schedule";
 import AgentSwap from "./pages/agent/Swap";
+import AgentHolidaySwap from "./pages/agent/HolidaySwap";
+import BackofficeHolidaySwap from "./pages/backoffice/HolidaySwap";
 
 import BackofficeHome from "./pages/backoffice/Home";
 import BackofficeSchedules from "./pages/backoffice/Schedules"; // kalender pribadi (per agent)
@@ -30,6 +32,7 @@ export default function App(){
           <Route path="/backoffice" element={<BackofficeHome/>} />
           <Route path="/backoffice/schedule" element={<BackofficeSchedules/>} />  {/* kalender pribadi */}
           <Route path="/backoffice/schedules" element={<ScheduleMatrix/>} />      {/* matrix semua */}
+           <Route path="/backoffice/holiday-swaps" element={<BackofficeHolidaySwap/>} />
         </Route>
       </Route>
 
@@ -40,6 +43,7 @@ export default function App(){
           <Route path="/agent" element={<AgentHome/>} />
           <Route path="/agent/schedule" element={<AgentSchedule/>} />
           <Route path="/agent/swap" element={<AgentSwap/>} />
+          <Route path="/agent/holiday" element={<AgentHolidaySwap/>} />
           <Route path="/agent/schedules-all" element={<ScheduleMatrix/>} />
         </Route>
       </Route>

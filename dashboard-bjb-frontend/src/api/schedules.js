@@ -28,3 +28,6 @@ export async function deleteSchedule(id) {
   const { data } = await api.delete(`/schedules/${id}`);
   return data;
 }
+
+export const getOffDays = (userId, month) =>
+  api.get(`/users/${userId}/off-days`, { params: { month } }).then(r => r.data);

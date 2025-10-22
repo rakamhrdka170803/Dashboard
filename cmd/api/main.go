@@ -7,6 +7,7 @@ import (
 
 	"bjb-backoffice/internal/config"
 	"bjb-backoffice/internal/database"
+	"bjb-backoffice/internal/domain"
 	httpHandler "bjb-backoffice/internal/http/handler"
 	httpRouter "bjb-backoffice/internal/http/router"
 	"bjb-backoffice/internal/repository"
@@ -22,6 +23,9 @@ func main() {
 	_ = godotenv.Load()
 	cfg := config.Load()
 	db := database.Connect(cfg.DBDSN)
+	if err := db.AutoMigrate(&domain.HolidaySwap{}); err != nil {
+		log.Fatal("auto-migrate holiday_swaps failed: ", err)
+	}
 
 	roleRepo := repository.NewRoleRepository(db)
 	userRepo := repository.NewUserRepository(db)
@@ -40,6 +44,9 @@ func main() {
 	schedSvc := service.NewScheduleService(schedRepo)
 	leaveSvc := service.NewLeaveService(leaveRepo, userRepo, notifSvc, findingSvc)
 	swapSvc := service.NewSwapService(swapRepo, schedSvc, notifSvc, userRepo)
+	holidayRepo := repository.NewHolidaySwapRepository(db)
+	holidaySvc := service.NewHolidaySwapService(holidayRepo, schedSvc, notifSvc, userRepo)
+	holidayH := httpHandler.NewHolidaySwapHandler(holidaySvc)
 
 	// seed roles + super admin
 	seed.Bootstrap(
@@ -72,7 +79,7 @@ func main() {
 	// Router setup
 	httpRouter.Setup(
 		r,
-		authH, userH, findingH, lateH, schedH, leaveH, swapH, notifH,
+		authH, userH, findingH, lateH, schedH, leaveH, swapH, notifH, holidayH,
 		[]byte(cfg.JWTSecret),
 	)
 
