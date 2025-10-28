@@ -10,7 +10,7 @@ import AgentSchedule from "./pages/agent/Schedule";
 import AgentSwap from "./pages/agent/Swap";
 import AgentHolidaySwap from "./pages/agent/HolidaySwap";
 import AgentLeave from "./pages/agent/Leave";                // NEW
-import BackofficeHolidaySwap from "./pages/backoffice/HolidaySwap";
+import BackofficeSwaps from "./pages/backoffice/Swaps"; 
 import BackofficeLeaves from "./pages/backoffice/Leaves";    // NEW
 import BackofficeFindings from "./pages/backoffice/Findings";
 
@@ -35,7 +35,7 @@ export default function App(){
           <Route path="/backoffice" element={<BackofficeHome/>} />
           <Route path="/backoffice/schedule" element={<BackofficeSchedules/>} />
           <Route path="/backoffice/schedules" element={<ScheduleMatrix/>} />
-          <Route path="/backoffice/holiday-swaps" element={<BackofficeHolidaySwap/>} />
+          <Route path="/backoffice/holiday-swaps" element={<BackofficeSwaps/>} />
           <Route path="/backoffice/leaves" element={<BackofficeLeaves/>} /> {/* NEW */}
           <Route path="/backoffice/findings" element={<BackofficeFindings/>} />
         </Route>

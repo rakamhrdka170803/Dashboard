@@ -4,26 +4,48 @@ import { createSwap, listSwaps, acceptSwap, cancelSwap } from "../../api/swaps";
 import { listMonthly } from "../../api/schedules";
 import { useAuth } from "../../context/AuthProvider";
 import { listUsersMini } from "../../api/users";
+import DateRangePicker from "../../components/DateRangePicker";
+
+const STATUS_COLORS = {
+  PENDING: "#f59e0b",
+  APPROVED: "#10b981",
+  CANCELLED: "#6b7280",
+};
+
+const Chip = ({ children }) => {
+  const color = STATUS_COLORS[String(children).toUpperCase()] || "#6b7280";
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: 999,
+        backgroundColor: `${color}22`,
+        color,
+        fontWeight: 600,
+        fontSize: 12,
+      }}
+    >
+      {children}
+    </span>
+  );
+};
 
 export default function AgentSwap() {
   const { user } = useAuth();
   const isAgent = (user?.roles || []).includes("AGENT");
   const myId = user?.id;
 
-  // map userId -> full_name (untuk display)
   const [nameById, setNameById] = useState({});
   const [allAgents, setAllAgents] = useState([]);
-  const [selectedTargetUserId, setSelectedTargetUserId] = useState(""); // ⬅ FIXED
+  const [selectedTargetUserId, setSelectedTargetUserId] = useState("");
 
-  // picker (modal) untuk pilih agent
   const [pickOpen, setPickOpen] = useState(false);
   const [pickQuery, setPickQuery] = useState("");
 
-  // State jadwal & waktu
   const [month, setMonth] = useState(dayjs().format("YYYY-MM"));
   const [mySchedules, setMySchedules] = useState([]);
 
-  // Ajukan
   const [selectedMySchForRequest, setSelectedMySchForRequest] = useState("");
   const selectedSch = useMemo(
     () => mySchedules.find((s) => String(s.id) === String(selectedMySchForRequest)),
@@ -34,29 +56,27 @@ export default function AgentSwap() {
   const [submitting, setSubmitting] = useState(false);
   const [msg, setMsg] = useState("");
 
-  // Lists
   const [pendingOthers, setPendingOthers] = useState([]);
   const [myPending, setMyPending] = useState([]);
 
-  // Modal Accept
   const [acceptOpen, setAcceptOpen] = useState(false);
   const [acceptTarget, setAcceptTarget] = useState(null);
   const [selectedMySchForAccept, setSelectedMySchForAccept] = useState("");
 
-  // Loaders
+  // NEW: History tab
+  const [history, setHistory] = useState([]);
+  const [hStatus, setHStatus] = useState(""); // ALL
+  const [hRange, setHRange] = useState({ from: "", to: "" });
+
   const loadMySchedules = async () => {
     const { items } = await listMonthly({ month });
     setMySchedules(items || []);
   };
 
-  // tampilkan pending orang lain yang:
-  // - status PENDING
-  // - requester bukan saya
-  // - (target null) ATAU (target == saya)
   const loadPendingOthers = async () => {
-    const { items } = await listSwaps({ page: 1, size: 100 });
+    const { items } = await listSwaps({ page: 1, size: 200 });
     const rows = (items || []).filter(
-      it =>
+      (it) =>
         it.status === "PENDING" &&
         it.requester_id !== myId &&
         (it.target_user_id == null || it.target_user_id === myId)
@@ -65,26 +85,34 @@ export default function AgentSwap() {
   };
 
   const loadMyPending = async () => {
-    const { items } = await listSwaps({ page: 1, size: 100 });
+    const { items } = await listSwaps({ page: 1, size: 200 });
     const rows = (items || []).filter(
       (it) => it.status === "PENDING" && Number(it.requester_id) === Number(myId)
     );
     setMyPending(rows);
   };
 
+  const loadHistory = async () => {
+    const { items } = await listSwaps({ page: 1, size: 500 });
+    // history pribadi: saya sebagai requester ATAU sebagai counterparty
+    const mine = (items || []).filter(
+      (it) => it.requester_id === myId || it.counterparty_id === myId
+    );
+    setHistory(mine);
+  };
+
   const reloadAll = async () => {
-    await Promise.all([loadMySchedules(), loadPendingOthers(), loadMyPending()]);
+    await Promise.all([loadMySchedules(), loadPendingOthers(), loadMyPending(), loadHistory()]);
   };
 
   useEffect(() => { loadMySchedules(); }, [month]);
-  useEffect(() => { loadPendingOthers(); loadMyPending(); }, [myId]);
+  useEffect(() => { loadPendingOthers(); loadMyPending(); loadHistory(); }, [myId]);
 
-  // Ambil daftar user mini (untuk nama & dropdown direct)
   useEffect(() => {
     (async () => {
       try {
         const users = await listUsersMini({});
-        setAllAgents((users || []).filter(u => u.id !== myId)); // exclude diri sendiri
+        setAllAgents((users || []).filter((u) => u.id !== myId));
         const map = {};
         (users || []).forEach((u) => (map[u.id] = u.full_name || `Agent #${u.id}`));
         setNameById(map);
@@ -95,7 +123,6 @@ export default function AgentSwap() {
     })();
   }, [myId]);
 
-  // Actions
   const submitSwap = async (e) => {
     e.preventDefault();
     if (!isAgent) return setMsg("Hanya agent yang dapat mengajukan.");
@@ -107,16 +134,18 @@ export default function AgentSwap() {
       await createSwap({
         start_at: dayjs(selectedSch.start_at).toISOString(),
         reason: reason.trim(),
-        ...(selectedTargetUserId ? { target_user_id: Number(selectedTargetUserId) } : {}), // ⬅ FIXED
+        ...(selectedTargetUserId ? { target_user_id: Number(selectedTargetUserId) } : {}),
       });
       setMsg("Swap berhasil diajukan. Menunggu agent lain meng-accept.");
       setReason("");
       setSelectedMySchForRequest("");
-      setSelectedTargetUserId(""); // reset ⬅ FIXED
-      await loadMyPending();
+      setSelectedTargetUserId("");
+      await Promise.all([loadMyPending(), loadHistory()]);
     } catch (err) {
       setMsg(err?.response?.data?.error || "Gagal mengajukan swap.");
-    } finally { setSubmitting(false); }
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const openAcceptModal = (swap) => {
@@ -155,7 +184,7 @@ export default function AgentSwap() {
     if (!confirm(`Batalkan permintaan #${sw.id}?`)) return;
     try {
       await cancelSwap({ swapId: sw.id });
-      await loadMyPending();
+      await Promise.all([loadMyPending(), loadHistory()]);
     } catch (err) {
       alert(err?.response?.data?.error || "Gagal membatalkan.");
     }
@@ -163,7 +192,6 @@ export default function AgentSwap() {
 
   const dash = (v) => (v && String(v).trim() !== "" ? v : "—");
 
-  // Filter list agent di modal
   const filteredAgents = useMemo(() => {
     const q = pickQuery.trim().toLowerCase();
     if (!q) return allAgents;
@@ -172,7 +200,17 @@ export default function AgentSwap() {
     );
   }, [pickQuery, allAgents, nameById]);
 
-  // Render
+  // NEW: filter history (status + date on start_at)
+  const filteredHistory = useMemo(() => {
+    const { from, to } = hRange;
+    return (history || []).filter((it) => {
+      if (hStatus && String(it.status).toUpperCase() !== hStatus.toUpperCase()) return false;
+      if (from && dayjs(it.start_at).isBefore(dayjs(from))) return false;
+      if (to && dayjs(it.start_at).isAfter(dayjs(to))) return false;
+      return true;
+    });
+  }, [history, hStatus, hRange]);
+
   return (
     <div className="swap-grid">
       {/* LEFT */}
@@ -180,7 +218,7 @@ export default function AgentSwap() {
         {/* Ajukan */}
         <section className="card fluid">
           <div className="section-head">
-            <h3 className="section-title">Ajukan Tukar Dinas / Libur</h3>
+            <h3 className="section-title">Ajukan Tukar Dinas</h3>
           </div>
 
           <form onSubmit={submitSwap} className="vstack-12">
@@ -204,22 +242,24 @@ export default function AgentSwap() {
                     </option>
                   ))}
               </select>
-              <div className="helper">Jam selesai: <b>{endDisp}</b></div>
+              <div className="helper">
+                Jam selesai: <b>{endDisp}</b>
+              </div>
             </div>
 
             <div>
               <label className="label">Alasan</label>
               <textarea
-                className="input" rows={3} placeholder="Tulis alasan…"
-                value={reason} onChange={(e) => setReason(e.target.value)}
+                className="input"
+                rows={3}
+                placeholder="Tulis alasan…"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
               />
             </div>
 
-            {/* === NEW: Direct ke Agent (custom picker) === */}
             <div>
               <label className="label">Arahkan ke Agent (opsional)</label>
-
-              {/* Tombol yang menampilkan pilihan saat ini */}
               <button
                 type="button"
                 className="input"
@@ -228,19 +268,21 @@ export default function AgentSwap() {
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  cursor: "pointer"
+                  cursor: "pointer",
                 }}
-                onClick={() => { setPickQuery(""); setPickOpen(true); }}
+                onClick={() => {
+                  setPickQuery("");
+                  setPickOpen(true);
+                }}
                 title="Klik untuk memilih agent"
               >
                 <span>
                   {selectedTargetUserId
-                    ? (nameById[selectedTargetUserId] || `Agent #${selectedTargetUserId}`)
+                    ? nameById[selectedTargetUserId] || `Agent #${selectedTargetUserId}`
                     : "— Kirim ke semua agent —"}
                 </span>
-                <span style={{ opacity: .6 }}>▼</span>
+                <span style={{ opacity: 0.6 }}>▼</span>
               </button>
-
               <div className="helper">
                 Jika dipilih, hanya agent tersebut (dan Backoffice) yang menerima permintaan.
               </div>
@@ -266,7 +308,6 @@ export default function AgentSwap() {
 
           <div className="list">
             {myPending.length === 0 && <div className="helper">Tidak ada pengajuan pending.</div>}
-
             {myPending.map((sw) => (
               <div className="swap-item" key={sw.id}>
                 <div className="swap-item__top">
@@ -274,7 +315,6 @@ export default function AgentSwap() {
                     <b>Swap #{sw.id}</b>
                     <span className="chip">{dash(sw.channel)}</span>
                   </div>
-
                   <div className="actions">
                     <button className="btn btn-danger" onClick={() => cancelMySwap(sw)}>
                       Batalkan
@@ -290,9 +330,16 @@ export default function AgentSwap() {
                 )}
                 <div className="meta">
                   <span>Window:</span>
-                  <b>{dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}</b>
+                  <b>
+                    {dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}
+                  </b>
                 </div>
-                {sw.reason && <div className="meta"><span>Alasan:</span><b>{sw.reason}</b></div>}
+                {sw.reason && (
+                  <div className="meta">
+                    <span>Alasan:</span>
+                    <b>{sw.reason}</b>
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -314,7 +361,8 @@ export default function AgentSwap() {
             {pendingOthers.length === 0 && <div className="helper">Tidak ada permintaan.</div>}
 
             {pendingOthers.map((sw) => {
-              const displayName = sw.requester_name || nameById[sw.requester_id] || `Agent #${sw.requester_id}`;
+              const displayName =
+                sw.requester_name || nameById[sw.requester_id] || `Agent #${sw.requester_id}`;
               return (
                 <div className="swap-item" key={sw.id}>
                   <div className="swap-item__top">
@@ -325,7 +373,9 @@ export default function AgentSwap() {
 
                     {isAgent && (
                       <div className="actions">
-                        <button className="btn" onClick={() => openAcceptModal(sw)}>Accept</button>
+                        <button className="btn" onClick={() => openAcceptModal(sw)}>
+                          Accept
+                        </button>
                         <button
                           className="btn btn-secondary"
                           onClick={() => alert("Lewati saja bila tidak ingin menerima.")}
@@ -342,52 +392,87 @@ export default function AgentSwap() {
                       <b>{nameById[sw.target_user_id] || `Agent #${sw.target_user_id}`}</b>
                     </div>
                   )}
-                  <div className="meta"><span>Pengaju:</span><b>{displayName}</b></div>
+                  <div className="meta">
+                    <span>Pengaju:</span>
+                    <b>{displayName}</b>
+                  </div>
                   <div className="meta">
                     <span>Window:</span>
-                    <b>{dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}</b>
+                    <b>
+                      {dayjs(sw.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(sw.end_at).format("HH:mm")}
+                    </b>
                   </div>
-                  {sw.reason && <div className="meta"><span>Alasan:</span><b>{sw.reason}</b></div>}
+                  {sw.reason && (
+                    <div className="meta">
+                      <span>Alasan:</span>
+                      <b>{sw.reason}</b>
+                    </div>
+                  )}
                 </div>
               );
             })}
           </div>
         </section>
 
-        {/* My Schedules */}
+        {/* NEW: Riwayat Saya */}
         <section className="card fluid">
-          <div className="section-head">
-            <h3 className="section-title">Jadwal Saya</h3>
-            <div className="section-actions">
-              <input
-                type="month" className="input" value={month}
-                onChange={(e) => setMonth(e.target.value)}
-                style={{ width: 170 }}
+          <div className="section-head" style={{ gap: 8 }}>
+            <h3 className="section-title">Riwayat Saya (Swap Dinas)</h3>
+            <div className="section-actions" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <select className="input" value={hStatus} onChange={(e) => setHStatus(e.target.value)} style={{ width: 180 }}>
+                <option value="">Status: SEMUA</option>
+                <option value="PENDING">PENDING</option>
+                <option value="APPROVED">APPROVED</option>
+                <option value="CANCELLED">CANCELLED</option>
+              </select>
+
+              <DateRangePicker
+                value={hRange}
+                onChange={setHRange}
+                onApply={setHRange}
+                placeholder="dd/mm/yyyy – dd/mm/yyyy"
+                buttonText="Update"
               />
+
+              <button className="btn btn-secondary" onClick={() => { setHStatus(""); setHRange({from:"", to:""}); }}>
+                Reset
+              </button>
+              <button className="btn btn-ghost" onClick={loadHistory}>Refresh</button>
             </div>
           </div>
 
-          <table className="table">
-            <thead>
-              <tr>
-                <th>ID</th><th>Tanggal</th><th>Jam</th><th>Channel</th><th>Shift/Catatan</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mySchedules.map((it) => (
-                <tr key={it.id}>
-                  <td><b>{it.id}</b></td>
-                  <td>{dayjs(it.start_at).format("DD MMM YYYY")}</td>
-                  <td>{dayjs(it.start_at).format("HH:mm")}–{dayjs(it.end_at).format("HH:mm")}</td>
-                  <td>{dash(it.channel)}</td>
-                  <td>{it.shift_name || it.notes || "-"}</td>
-                </tr>
-              ))}
-              {mySchedules.length === 0 && (
-                <tr><td colSpan={5} className="helper">Tidak ada jadwal.</td></tr>
-              )}
-            </tbody>
-          </table>
+          <div className="list">
+            {filteredHistory.length === 0 && <div className="helper">Belum ada riwayat.</div>}
+            {filteredHistory.map((it) => {
+              const otherId = it.requester_id === myId ? it.counterparty_id : it.requester_id;
+              return (
+                <div key={it.id} className="swap-item">
+                  <div className="swap-item__top">
+                    <div className="title-row">
+                      <b>Swap #{it.id}</b>
+                    </div>
+                    <Chip>{it.status}</Chip>
+                  </div>
+                  <div className="meta">
+                    <span>Dengan:</span>
+                    <b>{otherId ? nameById[otherId] || `Agent #${otherId}` : "—"}</b>
+                  </div>
+                  <div className="meta">
+                    <span>Window:</span>
+                    <b>
+                      {dayjs(it.start_at).format("DD MMM YYYY HH:mm")} – {dayjs(it.end_at).format("HH:mm")}
+                    </b>
+                  </div>
+                  {it.reason && (
+                    <div className="meta">
+                      <span>Alasan (pengaju):</span>
+                      <b>{it.reason}</b>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </section>
       </div>
 
@@ -409,21 +494,24 @@ export default function AgentSwap() {
               onChange={(e) => setSelectedMySchForAccept(e.target.value)}
             >
               <option value="">— Pilih salah satu —</option>
-              {candidateForAccept
+              {(candidateForAccept || [])
                 .slice()
                 .sort((a, b) => new Date(a.start_at) - new Date(b.start_at))
                 .map((s) => (
                   <option key={s.id} value={s.id}>
-                    #{s.id} • {dayjs(s.start_at).format("DD MMM")}{" "}
-                    {dayjs(s.start_at).format("HH:mm")}–
-                    {dayjs(s.end_at).format("HH:mm")} ({dash(s.channel)})
+                    #{s.id} • {dayjs(s.start_at).format("DD MMM")} {dayjs(s.start_at).format("HH:mm")}–
+                    {dayjs(s.end_at).format("HH:mm")} ({s.channel || "—"})
                   </option>
                 ))}
             </select>
 
             <div className="actions-right" style={{ marginTop: 12 }}>
-              <button className="btn" disabled={!selectedMySchForAccept} onClick={doAccept}>Kirim</button>
-              <button className="btn btn-secondary" onClick={() => setAcceptOpen(false)}>Batal</button>
+              <button className="btn" disabled={!selectedMySchForAccept} onClick={doAccept}>
+                Kirim
+              </button>
+              <button className="btn btn-secondary" onClick={() => setAcceptOpen(false)}>
+                Batal
+              </button>
             </div>
           </div>
         </div>
@@ -447,12 +535,15 @@ export default function AgentSwap() {
                 borderRadius: 12,
                 maxHeight: 360,
                 overflowY: "auto",
-                padding: 4
+                padding: 4,
               }}
             >
               <div
                 className="picker-item"
-                onClick={() => { setSelectedTargetUserId(""); setPickOpen(false); }} // ⬅ FIXED
+                onClick={() => {
+                  setSelectedTargetUserId("");
+                  setPickOpen(false);
+                }}
                 style={{ padding: 10, borderRadius: 10, cursor: "pointer" }}
               >
                 — Kirim ke semua agent —
@@ -462,13 +553,15 @@ export default function AgentSwap() {
                 <div
                   key={a.id}
                   className="picker-item"
-                  onClick={() => { setSelectedTargetUserId(a.id); setPickOpen(false); }} // ⬅ FIXED
+                  onClick={() => {
+                    setSelectedTargetUserId(a.id);
+                    setPickOpen(false);
+                  }}
                   style={{ padding: 10, borderRadius: 10, cursor: "pointer" }}
                 >
                   {nameById[a.id] || `Agent #${a.id}`}
                 </div>
               ))}
-
               {filteredAgents.length === 0 && (
                 <div className="helper" style={{ padding: 12 }}>
                   Tidak ada hasil.
@@ -477,7 +570,9 @@ export default function AgentSwap() {
             </div>
 
             <div className="actions-right" style={{ marginTop: 12 }}>
-              <button className="btn btn-secondary" onClick={() => setPickOpen(false)}>Tutup</button>
+              <button className="btn btn-secondary" onClick={() => setPickOpen(false)}>
+                Tutup
+              </button>
             </div>
           </div>
         </div>
