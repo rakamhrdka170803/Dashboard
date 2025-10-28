@@ -1,8 +1,35 @@
 import React, { useEffect, useMemo, useState } from "react";
 import dayjs from "dayjs";
-import { createLeaveRequest, listLeaveRequests, cancelLeaveRequest } from "../../api/leaveRequests"; // ✅
+import { createLeaveRequest, listLeaveRequests, cancelLeaveRequest } from "../../api/leaveRequests";
 import { getMyFindingCount } from "../../api/findings";
-import { fileUrl } from "../../api/client"; // ✅
+import { fileUrl } from "../../api/client";
+import DateRangePicker from "../../components/DateRangePicker";
+
+const STATUS_COLORS = {
+  PENDING: "#f59e0b",
+  APPROVED: "#10b981",
+  REJECTED: "#ef4444",
+  CANCELLED: "#6b7280",
+};
+
+function Chip({ children }) {
+  const color = STATUS_COLORS[String(children).toUpperCase()] || "#6b7280";
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        padding: "2px 8px",
+        borderRadius: 999,
+        backgroundColor: `${color}22`,
+        color,
+        fontWeight: 600,
+        fontSize: 12,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
 
 export default function AgentLeave() {
   const [startDate, setStartDate] = useState(dayjs().format("YYYY-MM-DD"));
@@ -14,13 +41,17 @@ export default function AgentLeave() {
   const [myLeaves, setMyLeaves] = useState([]);
   const [findCount, setFindCount] = useState(0);
 
+  // Riwayat filters
+  const [hStatus, setHStatus] = useState("");                 // ALL
+  const [hRange, setHRange] = useState({ from: "", to: "" }); // {from,to} 'YYYY-MM-DD'
+
   const monthForBlock = useMemo(
     () => dayjs(startDate || undefined).format("YYYY-MM"),
     [startDate]
   );
 
   const loadMine = async () => {
-    const { items } = await listLeaveRequests({ page: 1, size: 100 });
+    const { items } = await listLeaveRequests({ page: 1, size: 200 });
     setMyLeaves(items || []);
   };
 
@@ -70,8 +101,20 @@ export default function AgentLeave() {
     try { return urlPath.split("/").pop() || "lampiran"; } catch { return "lampiran"; }
   };
 
+  // FE filter riwayat (status + range by start_date)
+  const filteredLeaves = useMemo(() => {
+    const { from, to } = hRange || {};
+    return (myLeaves || []).filter((it) => {
+      if (hStatus && String(it.status).toUpperCase() !== hStatus.toUpperCase()) return false;
+      if (from && dayjs(it.start_date).isBefore(dayjs(from))) return false;
+      if (to && dayjs(it.start_date).isAfter(dayjs(to))) return false;
+      return true;
+    });
+  }, [myLeaves, hStatus, hRange]);
+
   return (
     <div className="vstack-16">
+      {/* Ajukan Cuti */}
       <section className="card fluid">
         <div className="section-head">
           <h3 className="section-title">Ajukan Cuti</h3>
@@ -109,19 +152,44 @@ export default function AgentLeave() {
           </div>
 
           <div className="actions-right">
-            <button className="btn" disabled={submitting || blocked}>{submitting ? "Mengirim..." : "Kirim Pengajuan"}</button>
+            <button className="btn" disabled={submitting || blocked}>
+              {submitting ? "Mengirim..." : "Kirim Pengajuan"}
+            </button>
           </div>
         </form>
       </section>
 
+      {/* Riwayat Cuti Saya */}
       <section className="card fluid">
         <div className="section-head">
-          <h3 className="section-title">Pengajuan Cuti Saya</h3>
-          <div className="section-actions"><button className="btn btn-ghost" onClick={loadMine}>Refresh</button></div>
+          <h3 className="section-title">Riwayat Cuti Saya</h3>
+          <div className="section-actions" style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+            <select className="input" value={hStatus} onChange={(e)=>setHStatus(e.target.value)} style={{width:180}}>
+              <option value="">Status: SEMUA</option>
+              <option value="PENDING">PENDING</option>
+              <option value="APPROVED">APPROVED</option>
+              <option value="REJECTED">REJECTED</option>
+              <option value="CANCELLED">CANCELLED</option>
+            </select>
+
+            <DateRangePicker
+              value={hRange}
+              onChange={setHRange}   // live preview
+              onApply={setHRange}    // final apply
+              placeholder="dd/mm/yyyy – dd/mm/yyyy"
+              buttonText="Update"
+            />
+
+            <button className="btn btn-secondary" onClick={()=>{ setHStatus(""); setHRange({from:"", to:""}); }}>
+              Reset
+            </button>
+            <button className="btn btn-ghost" onClick={loadMine}>Refresh</button>
+          </div>
         </div>
+
         <div className="list">
-          {myLeaves.length === 0 && <div className="helper">Tidak ada.</div>}
-          {myLeaves.map(it=>(
+          {filteredLeaves.length === 0 && <div className="helper">Tidak ada.</div>}
+          {filteredLeaves.map(it=>(
             <div key={it.id} className="swap-item">
               <div className="swap-item__top">
                 <div className="title-row"><b>Leave #{it.id}</b></div>
@@ -131,13 +199,26 @@ export default function AgentLeave() {
                   </div>
                 )}
               </div>
-              <div className="meta"><span>Tanggal:</span><b>{dayjs(it.start_date).format("DD MMM YYYY")} – {dayjs(it.end_date).format("DD MMM YYYY")}</b></div>
-              <div className="meta"><span>Status:</span><b>{it.status}</b></div>
+
+              <div className="meta">
+                <span>Tanggal:</span>
+                <b>{dayjs(it.start_date).format("DD MMM YYYY")} – {dayjs(it.end_date).format("DD MMM YYYY")}</b>
+              </div>
+
+              <div className="meta">
+                <span>Status:</span>
+                <b><Chip>{it.status}</Chip></b>
+              </div>
+
+              {it.rejection_reason && it.status === "REJECTED" && (
+                <div className="meta"><span>Alasan ditolak:</span><b>{it.rejection_reason}</b></div>
+              )}
+
               {it.file_url && (
                 <div className="meta">
                   <span>File:</span>
                   <a
-                    href={fileUrl(it.file_url)}     // ✅ absolute ke API
+                    href={fileUrl(it.file_url)}
                     target="_blank"
                     rel="noreferrer"
                     download={suggestName(it.file_url)}
@@ -146,6 +227,7 @@ export default function AgentLeave() {
                   </a>
                 </div>
               )}
+
               {it.reason && <div className="meta"><span>Alasan:</span><b>{it.reason}</b></div>}
             </div>
           ))}
