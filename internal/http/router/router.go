@@ -33,6 +33,7 @@ func Setup(
 	secured.GET("/me", userH.Me)
 	secured.PUT("/me", userH.UpdateMe)
 	secured.PUT("/me/password", userH.ChangePassword)
+	secured.POST("/me/photo", userH.UploadMyPhoto)
 
 	// users list: backoffice
 	secured.GET("/users",

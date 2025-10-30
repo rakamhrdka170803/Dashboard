@@ -1,8 +1,14 @@
 package handler
 
 import (
+	"fmt"
+	"mime/multipart"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"bjb-backoffice/internal/domain"
 	"bjb-backoffice/internal/service"
@@ -20,7 +26,6 @@ func (h *UserHandler) Me(c *gin.Context) {
 	val, _ := c.Get("claims")
 	claims := val.(jwt.MapClaims)
 
-	// kita simpan "sub" = userID saat login
 	idf, ok := claims["sub"].(float64)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid subject"})
@@ -41,6 +46,7 @@ func (h *UserHandler) Me(c *gin.Context) {
 		"email":     u.Email,
 		"roles":     userRolesToStrings(u),
 		"active":    u.Active,
+		"photo_url": u.PhotoURL, // ⬅️ penting untuk Topbar & Profile
 	})
 }
 
@@ -161,28 +167,32 @@ func (h *UserHandler) UpdateMe(c *gin.Context) {
 		return
 	}
 
-	// jika mau ganti email → minta current password
-	if req.Email != nil {
+	// ambil user saat ini untuk membandingkan email
+	current, err := h.svc.GetByID(uid)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	// minta current password HANYA jika email benar-benar berubah
+	if req.Email != nil && *req.Email != current.Email {
 		if req.CurrentPassword == nil || *req.CurrentPassword == "" {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "current_password required to change email"})
 			return
 		}
-		// verify current password before changing email
-		u, err := h.svc.GetByID(uid)
-		if err != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
-			return
-		}
-		if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(*req.CurrentPassword)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(current.PasswordHash), []byte(*req.CurrentPassword)); err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "current password is incorrect"})
 			return
 		}
+	} else {
+		// email tidak berubah → jangan kirim ke service agar tidak memicu validasi unik/email
+		req.Email = nil
 	}
 
 	updated, err := h.svc.UpdateSelf(uid, service.UpdateUserInput{
 		FullName: req.FullName,
-		Email:    req.Email,
-		PhotoURL: req.PhotoURL,
+		Email:    req.Email,    // nil jika tidak berubah
+		PhotoURL: req.PhotoURL, // boleh nil
 		// Active & Password tidak boleh via /me (kecuali endpoint khusus password di bawah)
 	})
 	if err != nil {
@@ -284,7 +294,75 @@ func (h *UserHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }
 
-// handler/user_handler.go
+// ====== Upload foto diri sendiri: POST /me/photo ======
+
+func isImage(fh *multipart.FileHeader) bool {
+	ct := fh.Header.Get("Content-Type")
+	if strings.HasPrefix(ct, "image/") {
+		return true
+	}
+	ext := strings.ToLower(filepath.Ext(fh.Filename))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".webp":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *UserHandler) UploadMyPhoto(c *gin.Context) {
+	val, _ := c.Get("claims")
+	claims := val.(jwt.MapClaims)
+	idf, ok := claims["sub"].(float64)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid subject"})
+		return
+	}
+	uid := uint(idf)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		return
+	}
+	if file.Size > 2*1024*1024 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file too large (max 2MB)"})
+		return
+	}
+	if !isImage(file) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid image type"})
+		return
+	}
+
+	// pastikan folder ada
+	dstDir := filepath.Join("uploads", "avatars")
+	if mkErr := os.MkdirAll(dstDir, 0755); mkErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare storage"})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	if ext == "" {
+		ext = ".jpg"
+	}
+	dstRel := filepath.Join("uploads", "avatars", fmt.Sprintf("%d_%d%s", uid, time.Now().Unix(), ext))
+
+	if err := c.SaveUploadedFile(file, dstRel); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save file"})
+		return
+	}
+
+	photoURL := "/" + filepath.ToSlash(dstRel)
+	if _, err := h.svc.UpdateSelf(uid, service.UpdateUserInput{PhotoURL: &photoURL}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update user photo"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"photo_url": photoURL})
+}
+
+// ====== util ======
+
 func hasRole(u *domain.User, rn domain.RoleName) bool {
 	for _, r := range u.Roles {
 		if r.Name == rn {
@@ -323,10 +401,7 @@ func (h *UserHandler) ListMini(c *gin.Context) {
 		if onlyAgents && !hasRole(u, domain.RoleAgent) {
 			continue
 		}
-		out = append(out, gin.H{
-			"id":        u.ID,
-			"full_name": u.FullName,
-		})
+		out = append(out, gin.H{"id": u.ID, "full_name": u.FullName})
 	}
 
 	c.JSON(http.StatusOK, gin.H{"items": out})

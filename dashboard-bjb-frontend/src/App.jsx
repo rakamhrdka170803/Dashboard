@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import ProtectedRoute from "./routes/ProtectedRoute";
 import Login from "./pages/Login";
 
+import ProfilePage from "./pages/Profile";
 import AgentLayout from "./layouts/AgentLayout";
 import BackofficeLayout from "./layouts/BackofficeLayout";
 
@@ -33,6 +34,7 @@ export default function App(){
         <Route element={<BackofficeLayout/>}>
           <Route index element={<BackofficeHome/>} />
           <Route path="/backoffice" element={<BackofficeHome/>} />
+          <Route path="/backoffice/profile" element={<ProfilePage/>} />
           <Route path="/backoffice/schedule" element={<BackofficeSchedules/>} />
           <Route path="/backoffice/schedules" element={<ScheduleMatrix/>} />
           <Route path="/backoffice/holiday-swaps" element={<BackofficeSwaps/>} />
@@ -46,6 +48,7 @@ export default function App(){
         <Route element={<AgentLayout/>}>
           <Route index element={<AgentHome/>} />
           <Route path="/agent" element={<AgentHome/>} />
+          <Route path="/agent/profile" element={<ProfilePage/>} />
           <Route path="/agent/schedule" element={<AgentSchedule/>} />
           <Route path="/agent/swap" element={<AgentSwap/>} />
           <Route path="/agent/holiday" element={<AgentHolidaySwap/>} />

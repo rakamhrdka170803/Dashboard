@@ -31,7 +31,12 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"token": token,
 		"user": gin.H{
-			"id": user.ID, "uuid": user.UUID, "name": user.FullName, "email": user.Email, "roles": userRolesToStrings(user),
+			"id":        user.ID,
+			"uuid":      user.UUID,
+			"name":      user.FullName,
+			"email":     user.Email,
+			"roles":     userRolesToStrings(user),
+			"photo_url": user.PhotoURL, // ⬅️ penting agar Topbar bisa langsung render foto
 		},
 	})
 }

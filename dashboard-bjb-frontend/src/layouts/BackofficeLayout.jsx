@@ -11,10 +11,8 @@ export default function BackofficeLayout() {
     { label:"Jadwal Pribadi", to:"/backoffice/schedule" },
     { label:"Jadwal Semua", to:"/backoffice/schedules" },
     { label:"Tukar Libur", to:"/backoffice/holiday-swaps" },
-    { label:"Pengajuan Cuti", to:"/backoffice/leaves" }, // NEW
-    // src/layouts/BackofficeLayout.jsx (items)
+    { label:"Pengajuan Cuti", to:"/backoffice/leaves" },
     { label:"Finding", to:"/backoffice/findings" },
-
   ];
 
   return (

@@ -12,7 +12,7 @@ export default function AgentLayout() {
     { label:"Jadwal Semua", to:"/agent/schedules-all" },
     { label:"Tukar Dinas", to:"/agent/swap", badge:"unread" },
     { label:"Tukar Libur", to:"/agent/holiday" },
-    { label:"Ajukan Cuti", to:"/agent/leave" }, // NEW
+    { label:"Ajukan Cuti", to:"/agent/leave" },
   ];
 
   return (
