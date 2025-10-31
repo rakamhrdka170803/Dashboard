@@ -26,7 +26,8 @@ func main() {
 	if err := db.AutoMigrate(
 		&domain.HolidaySwap{},
 		&domain.LeaveRequest{}, // NEW
-		&domain.Finding{},      // kalau belum dimigrate
+		&domain.Finding{},
+		&domain.CWCEntry{}, // kalau belum dimigrate
 	); err != nil {
 		log.Fatal("auto-migrate failed: ", err)
 	}
@@ -41,6 +42,7 @@ func main() {
 	swapRepo := repository.NewSwapRepository(db)
 	notifRepo := repository.NewNotificationRepository(db)
 	holidayRepo := repository.NewHolidaySwapRepository(db)
+	cwcRepo := repository.NewCWCRepository(db)
 
 	// services
 	authSvc := service.NewAuthService(userRepo, cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTExpiryH)
@@ -52,6 +54,7 @@ func main() {
 	leaveSvc := service.NewLeaveService(leaveRepo, userRepo, notifSvc, findingSvc, schedSvc) // pass schedSvc
 	swapSvc := service.NewSwapService(swapRepo, schedSvc, notifSvc, userRepo)
 	holidaySvc := service.NewHolidaySwapService(holidayRepo, schedSvc, notifSvc, userRepo)
+	cwcSvc := service.NewCWCService(cwcRepo)
 
 	// handlers
 	authH := httpHandler.NewAuthHandler(authSvc)
@@ -63,6 +66,7 @@ func main() {
 	swapH := httpHandler.NewSwapHandler(swapSvc, schedSvc, userSvc)
 	notifH := httpHandler.NewNotificationHandler(notifSvc)
 	holidayH := httpHandler.NewHolidaySwapHandler(holidaySvc)
+	cwcH := httpHandler.NewCWCHandler(cwcSvc)
 
 	// Gin & CORS
 	r := gin.Default()
@@ -81,7 +85,7 @@ func main() {
 	// Router
 	httpRouter.Setup(
 		r,
-		authH, userH, findingH, lateH, schedH, leaveH, swapH, notifH, holidayH,
+		authH, userH, findingH, lateH, schedH, leaveH, swapH, notifH, holidayH, cwcH,
 		[]byte(cfg.JWTSecret),
 	)
 

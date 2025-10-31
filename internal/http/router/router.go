@@ -20,6 +20,7 @@ func Setup(
 	swapH *handler.SwapHandler,
 	notifH *handler.NotificationHandler,
 	holidayH *handler.HolidaySwapHandler,
+	cwcH *handler.CWCHandler,
 	jwtSecret []byte,
 ) {
 	r.SetTrustedProxies(nil)
@@ -144,5 +145,20 @@ func Setup(
 
 	// Cancel oleh pengaju (agent)
 	holidayAgent.POST("/:id/cancel", holidayH.Cancel)
+
+	// --- CWC (akses role backoffice) ---
+	cwcGroup := secured.Group("/cwc")
+	cwcGroup.Use(middleware.RequireRoles(
+		string(domain.RoleSuperAdmin),
+		string(domain.RoleSPV),
+		string(domain.RoleQC),
+		string(domain.RoleTL),
+		string(domain.RoleHRAdmin),
+	))
+	cwcGroup.GET("/categories", cwcH.Categories)
+	cwcGroup.POST("/daily", cwcH.UpsertDaily)
+	cwcGroup.GET("", cwcH.Query)
+	cwcGroup.GET("/daily", cwcH.GetDaily) // NEW
+	cwcGroup.DELETE("/daily", cwcH.DeleteDaily)
 
 }

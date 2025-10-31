@@ -6,6 +6,9 @@ import ProfilePage from "./pages/Profile";
 import AgentLayout from "./layouts/AgentLayout";
 import BackofficeLayout from "./layouts/BackofficeLayout";
 
+import CWCInput from "./pages/backoffice/CWCInput";
+import CWCAnalytics from "./pages/backoffice/CWCAnalytics";
+
 import AgentHome from "./pages/agent/Home";
 import AgentSchedule from "./pages/agent/Schedule";
 import AgentSwap from "./pages/agent/Swap";
@@ -40,6 +43,8 @@ export default function App(){
           <Route path="/backoffice/holiday-swaps" element={<BackofficeSwaps/>} />
           <Route path="/backoffice/leaves" element={<BackofficeLeaves/>} /> {/* NEW */}
           <Route path="/backoffice/findings" element={<BackofficeFindings/>} />
+          <Route path="/backoffice/cwc-input" element={<CWCInput/>} />
+          <Route path="/backoffice/cwc-analytics" element={<CWCAnalytics/>} />
         </Route>
       </Route>
 

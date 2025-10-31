@@ -13,6 +13,8 @@ export default function BackofficeLayout() {
     { label:"Tukar Libur", to:"/backoffice/holiday-swaps" },
     { label:"Pengajuan Cuti", to:"/backoffice/leaves" },
     { label:"Finding", to:"/backoffice/findings" },
+    { label:"CWC Harian", to:"/backoffice/cwc-input" },        // ⬅️ NEW
+    { label:"CWC Analytics", to:"/backoffice/cwc-analytics" },
   ];
 
   return (
